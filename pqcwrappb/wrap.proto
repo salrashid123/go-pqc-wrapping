@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package pqcwrappb;
+
+option go_package = "github.com/salrashid123/go-pqc-wrapping/pqcwrappb";
+
+
+message Secret {
+  string name = 1;
+  int32 version = 2;
+  KeyType type = 3;
+  enum KeyType {
+    ml_kem_512 = 0;
+    ml_kem_768 = 1;
+    ml_kem_1024 = 2;    
+  }
+  bytes kemCipherText = 4;
+  bytes publicKey = 5;
+  bytes wrappedRawKey = 6;  
+}
+
