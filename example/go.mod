@@ -1,6 +1,6 @@
 module main
 
-go 1.22.4
+go 1.24.0
 
 require (
 	github.com/hashicorp/go-kms-wrapping/v2 v2.0.16
@@ -9,7 +9,6 @@ require (
 )
 
 require (
-	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	golang.org/x/net v0.24.0 // indirect
 )
