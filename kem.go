@@ -97,17 +97,20 @@ func (s *PQCWrapper) KeyId(_ context.Context) (string, error) {
 	return s.currentKeyId.Load().(string), nil
 }
 
-// Encrypts data using a TPM's Storage Root Key (SRK)
+// Encrypts data using a the KEM sharedKey
 func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapping.Option) (*wrapping.BlobInfo, error) {
 	if plaintext == nil {
 		return nil, errors.New("given plaintext for encryption is nil")
 	}
 
+	// first encrypt the cypertext using go-kms-wrappings base key
+	// this will return the 'env' variable below which includes the ciphertext, IV and raw innerKey
 	env, err := wrapping.EnvelopeEncrypt(plaintext, opt...)
 	if err != nil {
 		return nil, fmt.Errorf("error wrapping data: %w", err)
 	}
 
+	// acquire the ML-kem public key in PEM format
 	pubPEMblock, rest := pem.Decode([]byte(s.publicKey))
 	if len(rest) != 0 {
 		return nil, fmt.Errorf("error getting publicKey PEM: %w", err)
@@ -123,23 +126,29 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	var kemSharedSecret []byte
 	var wrappedCipherText []byte
 
+	// initialize an encapsulation key based on the type
+	// then acquire the kem ciphertext and the sharedkey
+	var keyType pqcwrappb.Secret_KeyType
 	switch pkix.Algorithm.Algorithm.String() {
 	case mlkem780_OID.String():
 		ek, err := mlkem.NewEncapsulationKey768(pkix.PublicKey.Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("error creating encapsulation key %v", err)
 		}
+		keyType = pqcwrappb.Secret_ml_kem_768
 		kemSharedSecret, kemCipherText = ek.Encapsulate()
 	case mlkem1024_OID.String():
 		ek, err := mlkem.NewEncapsulationKey1024(pkix.PublicKey.Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("error creating encapsulation key %v", err)
 		}
+		keyType = pqcwrappb.Secret_ml_kem_1024
 		kemSharedSecret, kemCipherText = ek.Encapsulate()
 	default:
 		return nil, fmt.Errorf("error unsupported algorithm %s", pkix.Algorithm.Algorithm.String())
 	}
 
+	// use the shared key to create a new outer encryption key
 	block, err := aes.NewCipher(kemSharedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("error creating aes inner cipher %v", err)
@@ -159,13 +168,14 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		return nil, fmt.Errorf("error reading options %v", err)
 	}
 
+	// encrypt the innerKey (env.Key) using the outerKey
 	wrappedCipherText = aesgcm.Seal(nil, nonce, env.Key, opts.GetWithAad())
 	wrappedCipherText = append(nonce, wrappedCipherText...)
 
 	wrappb := &pqcwrappb.Secret{
 		Name:          s.keyName,
 		Version:       KeyVersion,
-		Type:          pqcwrappb.Secret_ml_kem_768,
+		Type:          keyType,
 		KemCipherText: kemCipherText,
 		WrappedRawKey: wrappedCipherText,
 	}
@@ -203,6 +213,7 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		return nil, fmt.Errorf("failed to unwrap proto Key: %v", err)
 	}
 
+	// extract the private ML-KEM key
 	prPEMblock, rest := pem.Decode([]byte(s.privateKey))
 	if len(rest) != 0 {
 		return nil, fmt.Errorf("error getting private PEM: %w", err)
@@ -217,6 +228,8 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 
 	var sharedKey []byte
 
+	// now create a decapsulationKey based on the declared type
+	//  then acquire the raw (decrypted) sharedKey
 	switch prkix.Algorithm.Algorithm.String() {
 	case mlkem780_OID.String():
 		dk, err := mlkem.NewDecapsulationKey768(prkix.PrivateKey)
@@ -242,6 +255,7 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		return nil, fmt.Errorf("error unsupported algorithm %s", prkix.Algorithm.Algorithm.String())
 	}
 
+	// use the shared key to create the outerKey
 	block, err := aes.NewCipher(sharedKey)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing aes cipher: %w", err)
@@ -252,6 +266,7 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		return nil, fmt.Errorf("error initialing gcm: %w", err)
 	}
 
+	// extract the prepended nonce and raw ciphertext of the outerkey
 	nonce := wrappb.WrappedRawKey[:aesgcm.NonceSize()]
 	ciphertext := wrappb.WrappedRawKey[aesgcm.NonceSize():]
 
@@ -260,20 +275,21 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		return nil, fmt.Errorf("error reading options %v", err)
 	}
 
-	plaintext, err := aesgcm.Open(nil, nonce, ciphertext, opts.GetWithAad())
+	// decrypt the innerKey
+	innerKey, err := aesgcm.Open(nil, nonce, ciphertext, opts.GetWithAad())
 	if err != nil {
 		return nil, fmt.Errorf("error decrypting aes gcm  cipher: %w", err)
 	}
 
 	// the unsealed data is the inner encryption key
 	envInfo := &wrapping.EnvelopeInfo{
-		Key:        plaintext,
+		Key:        innerKey,
 		Iv:         in.Iv,
 		Ciphertext: in.Ciphertext,
 	}
 
 	// we're finally ready to decrypt the ciphertext
-	plaintext, err = wrapping.EnvelopeDecrypt(envInfo, opt...)
+	plaintext, err := wrapping.EnvelopeDecrypt(envInfo, opt...)
 	if err != nil {
 		return nil, fmt.Errorf("error decrypting data with envelope: %w", err)
 	}
