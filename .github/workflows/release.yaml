@@ -71,4 +71,4 @@ jobs:
 
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-checksums: "dist/go-tpm-wrapping_${{steps.set_version.outputs.no-dash}}_checksums.txt"
+          subject-checksums: "dist/go-pqc-wrapping_${{steps.set_version.outputs.no-dash}}_checksums.txt"
