@@ -2,6 +2,8 @@
 
 This is a simple go library and cli using `ML-KEM` to wrap encrypt/decrypt arbitrary data.  
 
+This is basically hybrid encryption where an `ML-KEM` keypair is used to wrap an `AES-GCM` encryption key which is ultimately used to encrypt the data.  Think of AES key as the `DEK` and the ML-KEM shared secret as the `KEK`
+
 It uses the standard `go1.24.0+` [crypto/mlkem](https://pkg.go.dev/crypto/mlkem@go1.24.0) library formatted for compliance with Hashicorp [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) library set
 
 
