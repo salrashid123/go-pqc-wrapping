@@ -116,7 +116,7 @@ To decrypt, you need to provide the PEM `bare-seed` format of the public key.
 
 There are two levels of encryption involved with this library and is best described in this flow:
 
-* `Encrypt(plaintext, kemPublicKey)`
+**Encrypt(plaintext, kemPublicKey)**
 
 1. Use `"github.com/hashicorp/go-kms-wrapping/v2"` encrypt the original plaintext.
    ```golang
@@ -177,7 +177,7 @@ The keyfile is:
 }
 ```
 
-* `Decrypt(ciphertext,kemCipherText,wrappedRawKey,kemPrivateKey)`
+**Decrypt(ciphertext,kemCipherText,wrappedRawKey,kemPrivateKey)**
 
 1. Initialize ML-KEM using private key and recover the `kemSharedSecret`
    ```golang
