@@ -2,7 +2,7 @@
 
 This is a simple go library and cli using `ML-KEM` to wrap encrypt/decrypt arbitrary data.  
 
-This is basically hybrid encryption where an `ML-KEM` keypair is used to wrap an `AES-GCM` encryption key which is ultimately used to encrypt the data.  Think of AES key as the `DEK` and the ML-KEM shared secret as the `KEK`
+This is basically hybrid encryption where an `ML-KEM` keypair is used to wrap an `AES-GCM` encryption key which is ultimately used to encrypt the data.  Think of AES key as the `DEK` and the ML-KEM shared secret as the `KEK`.  See [this post](https://crypto.stackexchange.com/questions/114235/have-any-hybrid-encryption-schemes-been-defined-for-quantum-resistant-algorithms)
 
 It uses the standard `go1.24.0+` [crypto/mlkem](https://pkg.go.dev/crypto/mlkem@go1.24.0) library formatted for compliance with Hashicorp [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) library set
 
@@ -41,11 +41,12 @@ To generate a key, you need openssl 3.5.0+ which you can get in a dockerfile for
 
 ```bash
 docker run -v /dev/urandom:/dev/urandom -ti salrashid123/openssl-pqs:3.5.0-dev
-  openssl -version
+
+$ openssl -version
     OpenSSL 3.5.0-dev  (Library: OpenSSL 3.5.0-dev )
 
 ### generate ML-KEM-768
-openssl genpkey  -algorithm mlkem768 \
+$ openssl genpkey  -algorithm mlkem768 \
    -provparam ml-kem.output_formats=bare-seed \
    -out priv-ml-kem-768-bare-seed.pem
 
@@ -55,6 +56,8 @@ openssl pkey  -in priv-ml-kem-768-bare-seed.pem  -pubout -out pub-ml-kem-768.pem
 TODO: support [crypto/mlkem](https://pkg.go.dev/crypto/mlkem) keys converted `Binary()` and used as the inputs in addition to the openssl PEM format
 
 ### CLI
+
+Prebuilt, signed binaries can be found under the `Release` page,  To run directly, you will need `go1.24.0+`
 
 ```bash
 ## Encrypt
@@ -113,17 +116,38 @@ To decrypt, you need to provide the PEM `bare-seed` format of the public key.
 
 There are two levels of encryption involved with this library and is best described in this flow:
 
-Encrypt:
+* `Encrypt(plaintext, kemPublicKey)`
 
-1. To encrypt, `go-kms-wrapping` library genaretes an inner AES key (innerKey) and IV and uses that to encrypt the data.
-2. Given the publickey for `ML-KEM` in PEM format, a new encapsulation key with a `sharedCiphertext` and `sharedSecret` is generated.
-3. The `sharedSecret` is used as an outerkey to AES-GCM Encrypt the AES Key innerKey from (1)
-4. The final output includes the ciphertext from 1, `sharedCiphertext` from 2 and encrypted innerkey from 3
+1. Use `"github.com/hashicorp/go-kms-wrapping/v2"` encrypt the original plaintext.
+   ```golang
+   env, err := wrapping.EnvelopeEncrypt(plaintext, opt...)
+   innerEncryptionKey := env.Key
+   innerIV := env.Iv
+   innerCipherText := env.Ciphertext
+   ```
 
-So when you encrypt data, the ciphertext and wrapped key itself is saved in json format:
+2. Read the `ML-KEM` Public key and generate `sharedCiphertext` and `sharedSecret`
+   ```golang
+   ek, err := mlkem.NewEncapsulationKey768(pkix.PublicKey.Bytes)
+   kemSharedSecret, kemCipherText = ek.Encapsulate()
+   ```
 
-* `ciphertext`: the encrypted data using the inner key provided by `go-kms-wrapping` library.
-* `wrappedKey`: the ML-KEM `sharedCiphertext` and the encrypted from of the inner key
+3. Create new AES-GCM key using `sharedSecret` as the key and encrypt `innerEncryptionKey`
+
+   ```golang
+   block, err := aes.NewCipher(kemSharedSecret)
+
+   outerKey, err := cipher.NewGCM(block)
+
+   wrappedRawKey = outerKey.Seal(nil, nonce, innerEncryptionKey, nil)
+   wrappedRawKey = append(nonce, wrappedRawKey...)
+   ```
+
+
+So when you encrypt data, the original `innerCipherText` and wrapped `innerEncryptionKey` itself is saved in json format:
+
+* `ciphertext`: the encrypted data using the inner key provided by `go-kms-wrapping` library (step 1)
+* `wrappedKey`: the ML-KEM `sharedCiphertext` and the encrypted from of the inner key (step 2,3)
 
 ```json
 {
@@ -152,6 +176,33 @@ The keyfile is:
   "wrappedRawKey": "suqwF3qB+EeYF4nBlmr2OuvhsTgGyJ5EvBQTo8aMSJWckBVk1AsHMguTE4XIxSr3Zl/LBV3RWm4xijwI"
 }
 ```
+
+* `Decrypt(ciphertext,kemCipherText,wrappedRawKey,kemPrivateKey)`
+
+1. Initialize ML-KEM using private key and recover the `kemSharedSecret`
+   ```golang
+   dk, err := mlkem.NewDecapsulationKey768(prkix.PrivateKey)
+   kemSharedSecret, err = dk.Decapsulate(wrappb.KemCipherText)
+   ```
+
+2. Initialize the outer AES-GCM Wrapper using the `kemSharedSecret` and decrypt `wrappedRawKey`
+   ```golang
+   block, err := aes.NewCipher(kemSharedSecret)
+	outerKey, err := cipher.NewGCM(block)
+
+   innerEncryptionKey, err := outerKey.Open(nil, nonce, wrappedRawKey,nil)
+   ```
+
+1. Use `"github.com/hashicorp/go-kms-wrapping/v2"` decrypt the original plaintext.
+   ```golang
+	envInfo := &wrapping.EnvelopeInfo{
+		Key:        innerEncryptionKey,
+		Iv:         innerIV,
+		Ciphertext: ciphertext,
+	}
+
+	plaintext, err := wrapping.EnvelopeDecrypt(envInfo, opt...)
+   ```
 
 You maybe wondering why this library rewraps an AES key (eg why not directly use the KEM `sharedSecret`?), well this is just inherited from the underlying library (`go-kms-wrapping`) in which you have to call `env, err := wrapping.EnvelopeEncrypt(plaintext, opt...)`  with the provided plaintext and that itself creates the inner AES key.  Sure, i could just write my own plain wrapper library and forget about `go-kms-wrapping`'s constructs but i'm trying to be consistent with it.
 
