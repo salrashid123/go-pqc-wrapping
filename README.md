@@ -57,16 +57,16 @@ TODO: support [crypto/mlkem](https://pkg.go.dev/crypto/mlkem) keys converted `Bi
 
 ### CLI
 
-Prebuilt, signed binaries can be found under the `Release` page,  To run directly, you will need `go1.24.0+`
+Prebuilt, signed binaries can be found under the [Releases](https://github.com/salrashid123/go-pqc-wrapping/releases) page,  To run directly, you will need `go1.24.0+`
 
 ```bash
 ## Encrypt
-go run cmd/main.go --mode=encrypt \
+./go-pqc-wrapping --mode=encrypt \
  --key=example/certs/pub-ml-kem-768.pem \
  --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json --debug
 
 ## decrypt
-go run cmd/main.go --mode=decrypt \
+./go-pqc-wrapping  --mode=decrypt \
  --key=example/certs/bare-seed.pem \
  --in=/tmp/encrypted.json --out=/tmp/decrypted.txt --debug
 ```
@@ -259,6 +259,60 @@ static const ML_COMMON_PKCS8_FMT ml_kem_768_p8fmt[NUM_PKCS8_FORMATS] = {
     { "bare-priv",  0x0960, 4, 0,          0,      0, 0,    0,          0,    0x0960, 0,      0,     },
     { "bare-seed",  0x0040, 4, 0,          0,      0, 0x40, 0,          0,    0,      0,      0,     },
 };
+```
+
+#### Ml-KEM x509 Certificate
+
+You can also encode the `ML-KEM` public key within a signed x509 certificate.  For details, see [ml-kem x509](https://github.com/salrashid123/pqc_scratchpad?tab=readme-ov-file#ml-kem) 
+
+#### Verify Release Binary
+
+If you download a binary from the "Releases" page, you can verify the signature with GPG:
+
+```bash
+gpg --keyserver keys.openpgp.org --recv-keys 3FCD7ECFB7345F2A98F9F346285AEDB3D5B5EF74
+
+## to verify the checksum file for a given release:
+wget https://github.com/salrashid123/go-pqc-wrapping/releases/download/v0.0.3/go-pqc-wrapping_0.0.3_checksums.txt
+wget https://github.com/salrashid123/go-pqc-wrapping/releases/download/v0.0.3/go-pqc-wrapping_0.0.3_checksums.txt.sig
+
+gpg --verify go-pqc-wrapping_0.0.3_checksums.txt.sig go-pqc-wrapping_0.0.3_checksums.txt
+```
+
+#### Verify Release Binary with github Attestation
+
+You can also verify the binary using [github attestation](https://github.blog/news-insights/product-news/introducing-artifact-attestations-now-in-public-beta/)
+
+For example, the attestation for releases `[@refs/tags/v0.0.3]` can be found at
+
+* [https://github.com/salrashid123/go-pqc-wrapping/attestations](https://github.com/salrashid123/go-pqc-wrapping/attestations)
+
+Then to verify:
+
+```bash
+wget https://github.com/salrashid123/go-pqc-wrapping/releases/download/v0.0.3/go-pqc-wrapping_0.0.3_linux_amd64
+wget https://github.com/salrashid123/go-pqc-wrapping/attestations/5187009/download -O salrashid123-go-pqc-wrapping-attestation-5187009.json
+
+gh attestation verify --owner salrashid123 --bundle salrashid123-go-pqc-wrapping-attestation-5187009.json  go-pqc-wrapping_0.0.3_linux_amd64 
+
+      Loaded digest sha256:aad438184e9440d3b12c5d85eef2ede60138f74da28238369a037954a968a38c for file://go-pqc-wrapping_0.0.3_linux_amd64
+      Loaded 1 attestation from salrashid123-go-pqc-wrapping-attestation-5187009.json
+
+      The following policy criteria will be enforced:
+      - Predicate type must match:................ https://slsa.dev/provenance/v1
+      - Source Repository Owner URI must match:... https://github.com/salrashid123
+      - Subject Alternative Name must match regex: (?i)^https://github.com/salrashid123/
+      - OIDC Issuer must match:................... https://token.actions.githubusercontent.com
+
+      ✓ Verification succeeded!
+
+      The following 1 attestation matched the policy criteria
+
+      - Attestation #1
+      - Build repo:..... salrashid123/go-pqc-wrapping
+      - Build workflow:. .github/workflows/release.yaml@refs/tags/v0.0.3
+      - Signer repo:.... salrashid123/go-pqc-wrapping
+      - Signer workflow: .github/workflows/release.yaml@refs/tags/v0.0.3
 ```
 
 ### References
