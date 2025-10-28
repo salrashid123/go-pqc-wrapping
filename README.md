@@ -6,6 +6,7 @@ This is basically hybrid encryption where an `ML-KEM` keypair is used to wrap an
 
 It uses the standard `go1.24.0+` [crypto/mlkem](https://pkg.go.dev/crypto/mlkem@go1.24.0) library formatted for compliance with Hashicorp [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) library set
 
+This library also support GCP KMS's support for `ML-KEM`
 
 >> NOTE: this library is note supported by Google; its exprimental...caveat emptor.
 
@@ -25,6 +26,7 @@ Also see:
     - [Encrypt](#encrypt)
     - [Decrypt](#decrypt)
 * [Wrapped Key format](#wrapped-key-format)
+* [GCP KMS](#gcp-kms)
 * [Build](#build)
 * [Openssl key formats](#openssl-key-formats)
 * [References](#references)
@@ -60,14 +62,16 @@ TODO: support [crypto/mlkem](https://pkg.go.dev/crypto/mlkem) keys converted `Bi
 Prebuilt, signed binaries can be found under the [Releases](https://github.com/salrashid123/go-pqc-wrapping/releases) page,  To run directly, you will need `go1.24.0+`
 
 ```bash
+go build  -o go-pqc-wrapping cmd/main.go
+
 ## Encrypt
 ./go-pqc-wrapping --mode=encrypt \
- --key=example/certs/pub-ml-kem-768.pem \
+ --key=file://`pwd`/example/certs/pub-ml-kem-768.pem \
  --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json --debug
 
 ## decrypt
 ./go-pqc-wrapping  --mode=decrypt \
- --key=example/certs/bare-seed.pem \
+ --key=file://`pwd`/example/certs/bare-seed.pem \
  --in=/tmp/encrypted.json --out=/tmp/decrypted.txt --debug
 ```
 
@@ -81,10 +85,7 @@ To encrypt, you need to provide the PEM format of the ML-KEM public key:
 	pubPEMBytes, err := os.ReadFile(*publicKey)
 
 	wrapper := pqcwrap.NewWrapper()
-	_, err = wrapper.SetConfig(ctx, wrapping.WithConfigMap(map[string]string{
-		pqcwrap.PublicKey: string(pubPEMBytes),
-		pqcwrap.KeyName:   "mykey",
-	}))
+	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(pubPEMBytes)), pqcwrap.WithKeyName("myname"))
 
 	blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt))
 
@@ -98,9 +99,8 @@ To decrypt, you need to provide the PEM `bare-seed` format of the public key.
 	privatePEMBytes, err := os.ReadFile(*privateKey)
 
 	wrapper := pqcwrap.NewWrapper()
-	_, err = wrapper.SetConfig(ctx, wrapping.WithConfigMap(map[string]string{
-		pqcwrap.PrivateKey: string(privatePEMBytes),
-	}))
+
+	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(string(privatePEMBytes)))
 
 	b, err := os.ReadFile(*encryptedBlob)
 
@@ -110,6 +110,88 @@ To decrypt, you need to provide the PEM `bare-seed` format of the public key.
 	plaintext, err := wrapper.Decrypt(ctx, newBlobInfo)
 
 	fmt.Printf("Decrypted %s\n", string(plaintext))
+```
+
+see `example/` folder:
+
+as library:
+
+```bash
+cd example
+## Encrypt
+go run encrypt/main.go --publicKey=certs/pub-ml-kem-768.pem
+
+# Decrypt
+go run decrypt/main.go --privateKey="certs/bare-seed.pem"
+```
+
+### GCP KMS
+
+This library also support encapsulation using [GCP KMS MLKEM](https://docs.cloud.google.com/kms/docs/key-encapsulation-mechanisms) (yes, i'm aware [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) supports KMS but it doesn't yet support ML-KEM)
+
+
+To use this mode, first create a kms key
+
+
+```bash
+gcloud kms keyrings create kem_kr --location=global
+
+gcloud kms keys create kem_key_1 \
+    --keyring kem_kr \
+    --location global \
+    --purpose "key-encapsulation" \
+    --default-algorithm ml-kem-768 \
+    --protection-level "software"
+
+
+gcloud kms keys versions get-public-key 1 \
+    --key kem_key_1 \
+    --keyring kem_kr \
+    --location global  \
+    --output-file /tmp/kem_pub.nist \
+    --public-key-format nist-pqc
+```
+
+The extract the public key into PEM format:
+
+```bash
+$ openssl --version
+  OpenSSL 3.5.0-dev  (Library: OpenSSL 3.5.0-dev )
+
+$ { echo -n "MIIEsjALBglghkgBZQMEBAIDggShAA==" | base64 -d ; cat /tmp/kem_pub.nist; } | openssl asn1parse -inform DER -in -
+    0:d=0  hl=4 l=1202 cons: SEQUENCE          
+    4:d=1  hl=2 l=  11 cons: SEQUENCE          
+    6:d=2  hl=2 l=   9 prim: OBJECT            :ML-KEM-768
+   17:d=1  hl=4 l=1185 prim: BIT STRING        
+
+$ cd example/
+$ { echo -n "MIIEsjALBglghkgBZQMEBAIDggShAA==" | base64 -d ; cat /tmp/kem_pub.nist; } \
+   | openssl pkey -inform DER -pubin -pubout -out certs/pub-ml-kem-768-kms.pem
+```
+
+then with cli
+
+```bash
+## Encrypt
+./go-pqc-wrapping --mode=encrypt \
+ --key=file://`pwd`/example/certs/pub-ml-kem-768-kms.pem \
+ --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json --debug
+
+## decrypt
+./go-pqc-wrapping  --mode=decrypt \
+ --key="gcpkms://projects/core-eso/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1" \
+ --in=/tmp/encrypted.json --out=/tmp/decrypted.txt --debug
+```
+
+as library:
+
+```bash
+cd example
+## Encrypt
+go run encrypt/main.go --publicKey=certs/pub-ml-kem-768-kms.pem
+
+# Decrypt
+go run decrypt_kms/main.go --kmsURI="gcpkms://projects/core-eso/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1"
 ```
 
 ### Wrapped Key format

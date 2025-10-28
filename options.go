@@ -77,6 +77,7 @@ type options struct {
 	withPublicKey  string
 	withPrivateKey string
 	withDebug      bool
+	withKMSKey     bool
 }
 
 func getDefaultOptions() options {
@@ -127,6 +128,15 @@ func WithDebug(with bool) wrapping.Option {
 	return func() interface{} {
 		return OptionFunc(func(o *options) error {
 			o.withDebug = with
+			return nil
+		})
+	}
+}
+
+func WithKMSKey(with bool) wrapping.Option {
+	return func() interface{} {
+		return OptionFunc(func(o *options) error {
+			o.withKMSKey = with
 			return nil
 		})
 	}

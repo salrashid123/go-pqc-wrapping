@@ -28,7 +28,8 @@ const (
 	EnvPrivateKey = "PQC_PRIVATE_KEY"
 	EnvKeyName    = "PQC_KEY_NAME"
 
-	EnvDEBUG = "PQC_DEBUG"
+	EnvDEBUG  = "PQC_DEBUG"
+	EnvKMSKey = "PQC_KMS_KEY"
 
 	KeyName    = "key_name"
 	PublicKey  = "public_key"

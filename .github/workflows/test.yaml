@@ -20,5 +20,8 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Run tests
-        run: go test -v ./...
+        env:
+          CICD_SA_JSON: ${{ secrets.CICD_SA_JSON }}
+
+        run: go test -v
 

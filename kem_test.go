@@ -5,11 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
+)
+
+const (
+	kmsPrivateKey = "gcpkms://projects/core-eso/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1"
 )
 
 func TestEncryptDecrypt768(t *testing.T) {
@@ -95,4 +100,55 @@ func TestEncryptDecrypt768Fail(t *testing.T) {
 	_, err = wrapperD.Decrypt(ctx, newBlobInfo)
 	require.Error(t, err)
 
+}
+
+func TestEncryptDecryptKMS768(t *testing.T) {
+
+	ctx := context.Background()
+
+	pubBytes, err := os.ReadFile("example/certs/pub-ml-kem-768-kms.pem")
+	require.NoError(t, err)
+
+	keyName := "bar"
+
+	saJSON := os.Getenv("CICD_SA_JSON")
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "cert.json")
+
+	err = os.WriteFile(filePath, []byte(saJSON), 0644)
+	require.NoError(t, err)
+
+	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filePath)
+
+	wrapper := NewWrapper()
+	_, err = wrapper.SetConfig(ctx, WithPublicKey(string(pubBytes)), WithKeyName(keyName))
+	require.NoError(t, err)
+
+	dataToSeal := []byte("foo")
+
+	blobInfo, err := wrapper.Encrypt(ctx, dataToSeal)
+	require.NoError(t, err)
+
+	b, err := protojson.Marshal(blobInfo)
+	require.NoError(t, err)
+
+	var prettyJSON bytes.Buffer
+	err = json.Indent(&prettyJSON, b, "", "\t")
+	require.NoError(t, err)
+
+	newBlobInfo := &wrapping.BlobInfo{}
+	err = protojson.Unmarshal(b, newBlobInfo)
+	require.NoError(t, err)
+
+	wrapperD := NewWrapper()
+	_, err = wrapperD.SetConfig(ctx, WithPrivateKey(kmsPrivateKey), WithKMSKey(true))
+	require.NoError(t, err)
+
+	plaintext, err := wrapperD.Decrypt(ctx, newBlobInfo)
+	require.NoError(t, err)
+
+	require.Equal(t, keyName, newBlobInfo.KeyInfo.KeyId)
+
+	require.Equal(t, dataToSeal, plaintext)
 }

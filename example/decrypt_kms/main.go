@@ -14,7 +14,7 @@ import (
 const ()
 
 var (
-	privateKey    = flag.String("privateKey", "certs/bare-seed.pem", "PrivateKey Key (bare seed only)")
+	kmsURI        = flag.String("kmsURI", "gcpkms://projects/core-eso/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1", "PrivateKey Key on KMS")
 	encryptedBlob = flag.String("encryptedBlob", "/tmp/encrypted.json", "Encrypted Blob")
 )
 
@@ -23,14 +23,10 @@ func main() {
 
 	ctx := context.Background()
 
-	privatePEMBytes, err := os.ReadFile(*privateKey)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading public key %v\n", err)
-		os.Exit(1)
-	}
 	wrapper := pqcwrap.NewWrapper()
-
-	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(string(privatePEMBytes)))
+	_, err := wrapper.SetConfig(ctx,
+		pqcwrap.WithPrivateKey(*kmsURI),
+		pqcwrap.WithKMSKey(true))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
 		os.Exit(1)

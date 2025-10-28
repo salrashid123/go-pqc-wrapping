@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
@@ -48,19 +49,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	k, err := os.ReadFile(*key)
+	u, err := url.Parse(*key)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s error: reading key file %v  \n", *mode, err)
+		fmt.Fprintf(os.Stderr, "error parsing URL; must be one of file:// or gcpkms:// :", err)
+		os.Exit(1)
+	}
+
+	var keyBytes []byte
+
+	useKMS := false
+	switch u.Scheme {
+	case "file":
+		keyBytes, err = os.ReadFile(u.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: reading key file %v  \n", err)
+			os.Exit(1)
+		}
+	case "gcpkms":
+		useKMS = true
+	default:
+		fmt.Fprintf(os.Stderr, "error parsing URL; must be one of file:// or gcpkms:// :", err)
 		os.Exit(1)
 	}
 
 	if *mode == "encrypt" {
 
 		wrapper := pqcwrap.NewWrapper()
-		_, err = wrapper.SetConfig(ctx, wrapping.WithConfigMap(map[string]string{
-			pqcwrap.PublicKey: string(k),
-			pqcwrap.KeyName:   *keyName,
-		}))
+		_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(keyBytes)))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
 			os.Exit(1)
@@ -99,14 +114,17 @@ func main() {
 	} else {
 
 		wrapper := pqcwrap.NewWrapper()
-		_, err := wrapper.SetConfig(ctx, wrapping.WithConfigMap(map[string]string{
-			pqcwrap.PrivateKey: string(k),
-		}))
+
+		wrapper.SetConfig(ctx, pqcwrap.WithDebug(*debug))
+		if useKMS {
+			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(*key), pqcwrap.WithKMSKey(true))
+		} else {
+			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(string(keyBytes)))
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
 			os.Exit(1)
 		}
-		wrapper.SetConfig(ctx, pqcwrap.WithDebug(*debug))
 
 		b, err := os.ReadFile(*in)
 		if err != nil {

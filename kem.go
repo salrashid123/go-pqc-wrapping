@@ -11,8 +11,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync/atomic"
 
+	kms "cloud.google.com/go/kms/apiv1"
+	"cloud.google.com/go/kms/apiv1/kmspb"
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	"github.com/salrashid123/go-pqc-wrapping/pqcwrappb"
 	context "golang.org/x/net/context"
@@ -32,6 +35,7 @@ type PQCWrapper struct {
 	publicKey    string
 	privateKey   string
 	debug        bool
+	kmsKey       bool
 	userAgent    string
 }
 
@@ -77,6 +81,7 @@ func (s *PQCWrapper) SetConfig(_ context.Context, opt ...wrapping.Option) (*wrap
 		s.keyName = opts.withKeyName
 	}
 
+	s.kmsKey = opts.withKMSKey
 	s.debug = opts.withDebug
 
 	// Map that holds non-sensitive configuration info to return
@@ -213,46 +218,71 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		return nil, fmt.Errorf("failed to unwrap proto Key: %v", err)
 	}
 
-	// extract the private ML-KEM key
-	prPEMblock, rest := pem.Decode([]byte(s.privateKey))
-	if len(rest) != 0 {
-		return nil, fmt.Errorf("error getting private PEM: %w", err)
-	}
-
-	var prkix pkixPrivKey
-	if rest, err := asn1.Unmarshal(prPEMblock.Bytes, &prkix); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal private key")
-	} else if len(rest) != 0 {
-		return nil, fmt.Errorf("failed to decode private key PEM rest")
-	}
-
 	var sharedKey []byte
+	if s.kmsKey {
+		kmsName := ""
+		if strings.HasPrefix(s.privateKey, "gcpkms://") {
+			kmsName = strings.TrimPrefix(s.privateKey, "gcpkms://")
+		} else {
+			return nil, fmt.Errorf("unsupported kms prefix %s", s.privateKey)
+		}
+		ctx := context.Background()
+		client, err := kms.NewKeyManagementClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer client.Close()
 
-	// now create a decapsulationKey based on the declared type
-	//  then acquire the raw (decrypted) sharedKey
-	switch prkix.Algorithm.Algorithm.String() {
-	case mlkem780_OID.String():
-		dk, err := mlkem.NewDecapsulationKey768(prkix.PrivateKey)
+		resp, err := client.Decapsulate(ctx, &kmspb.DecapsulateRequest{
+			Name:       kmsName,
+			Ciphertext: wrappb.KemCipherText,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
+			return nil, err
+		}
+		sharedKey = resp.SharedSecret
+
+	} else {
+		// extract the private ML-KEM key
+		prPEMblock, rest := pem.Decode([]byte(s.privateKey))
+		if len(rest) != 0 {
+			return nil, fmt.Errorf("error getting private PEM: %w", err)
 		}
 
-		sharedKey, err = dk.Decapsulate(wrappb.KemCipherText)
-		if err != nil {
-			return nil, fmt.Errorf("error decapsulating: %w", err)
-		}
-	case mlkem1024_OID.String():
-		dk, err := mlkem.NewDecapsulationKey1024(prkix.PrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
+		var prkix pkixPrivKey
+		if rest, err := asn1.Unmarshal(prPEMblock.Bytes, &prkix); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal private key")
+		} else if len(rest) != 0 {
+			return nil, fmt.Errorf("failed to decode private key PEM rest")
 		}
 
-		sharedKey, err = dk.Decapsulate(wrappb.KemCipherText)
-		if err != nil {
-			return nil, fmt.Errorf("error decapsulating: %w", err)
+		// now create a decapsulationKey based on the declared type
+		//  then acquire the raw (decrypted) sharedKey
+		switch prkix.Algorithm.Algorithm.String() {
+		case mlkem780_OID.String():
+			dk, err := mlkem.NewDecapsulationKey768(prkix.PrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
+			}
+
+			sharedKey, err = dk.Decapsulate(wrappb.KemCipherText)
+			if err != nil {
+				return nil, fmt.Errorf("error decapsulating: %w", err)
+			}
+		case mlkem1024_OID.String():
+			dk, err := mlkem.NewDecapsulationKey1024(prkix.PrivateKey)
+			if err != nil {
+				return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
+			}
+
+			sharedKey, err = dk.Decapsulate(wrappb.KemCipherText)
+			if err != nil {
+				return nil, fmt.Errorf("error decapsulating: %w", err)
+			}
+		default:
+			return nil, fmt.Errorf("error unsupported algorithm %s", prkix.Algorithm.Algorithm.String())
 		}
-	default:
-		return nil, fmt.Errorf("error unsupported algorithm %s", prkix.Algorithm.Algorithm.String())
+
 	}
 
 	// use the shared key to create the outerKey

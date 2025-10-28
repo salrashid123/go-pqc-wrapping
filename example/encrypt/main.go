@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 
-	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	pqcwrap "github.com/salrashid123/go-pqc-wrapping"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -19,7 +18,7 @@ const ()
 var (
 	publicKey     = flag.String("publicKey", "certs/pub-ml-kem-768.pem", "Public Key")
 	dataToEncrypt = flag.String("dataToEncrypt", "foo", "data to encrypt")
-	encryptedBlob = flag.String("encryptedBlob", "encrypted.json", "Encrypted Blob")
+	encryptedBlob = flag.String("encryptedBlob", "/tmp/encrypted.json", "Encrypted Blob")
 )
 
 const ()
@@ -35,10 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 	wrapper := pqcwrap.NewWrapper()
-	_, err = wrapper.SetConfig(ctx, wrapping.WithConfigMap(map[string]string{
-		pqcwrap.PublicKey: string(pubPEMBytes),
-		pqcwrap.KeyName:   "mykey",
-	}))
+	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(pubPEMBytes)), pqcwrap.WithKeyName("myname"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
 		os.Exit(1)
