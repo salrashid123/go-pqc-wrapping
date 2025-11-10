@@ -1,10 +1,13 @@
 package pqcwrap
 
 import (
+	"fmt"
+
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 )
 
-// getOpts iterates the inbound Options and returns a struct
+type Option func(*options)
+
 func getOpts(opt ...wrapping.Option) (*options, error) {
 	// First, separate out options into local and global
 	opts := getDefaultOptions()
@@ -34,23 +37,8 @@ func getOpts(opt ...wrapping.Option) (*options, error) {
 	if opts.Options == nil {
 		opts.Options = new(wrapping.Options)
 	}
-
-	// Local options can be provided either via the WithConfigMap field
-	// (for over the plugin barrier or embedding) or via local option functions
-	// (for embedding). First pull from the option.
 	if opts.WithConfigMap != nil {
-		for k, v := range opts.WithConfigMap {
-			switch k {
-			case "user_agent":
-				opts.withUserAgent = v
-			case KeyName:
-				opts.withKeyName = v
-			case PublicKey:
-				opts.withPublicKey = v
-			case PrivateKey:
-				opts.withPrivateKey = v
-			}
-		}
+		return nil, fmt.Errorf("WithConfigMap not supported")
 	}
 
 	// Now run the local options functions. This may overwrite options set by

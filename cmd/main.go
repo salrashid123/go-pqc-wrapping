@@ -18,6 +18,7 @@ var (
 	mode = flag.String("mode", "encrypt", "operation mode: encrypt or decrypt")
 
 	dataToEncrypt = flag.String("dataToEncrypt", "", "data to encrypt")
+	aad           = flag.String("aad", "", "with additional data")
 
 	debug   = flag.Bool("debug", false, "verbose output")
 	version = flag.Bool("version", false, "print version")
@@ -82,7 +83,7 @@ func main() {
 		}
 		wrapper.SetConfig(ctx, pqcwrap.WithDebug(*debug))
 
-		blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt))
+		blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt), wrapping.WithAad([]byte(*aad)))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error decrypting %v\n", err)
 			os.Exit(1)
@@ -139,7 +140,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		plaintext, err := wrapper.Decrypt(ctx, newBlobInfo)
+		plaintext, err := wrapper.Decrypt(ctx, newBlobInfo, wrapping.WithAad([]byte(*aad)))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error decrypting %v\n", err)
 			os.Exit(1)
