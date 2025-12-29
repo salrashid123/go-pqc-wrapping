@@ -6,9 +6,9 @@ This is basically hybrid encryption where an `ML-KEM` keypair is used to wrap an
 
 It uses the standard `go1.24.0+` [crypto/mlkem](https://pkg.go.dev/crypto/mlkem@go1.24.0) library formatted for compliance with Hashicorp [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) library set
 
-This library also support GCP KMS's support for `ML-KEM`
+This library also supports Google Cloud KMS's support for `ML-KEM`
 
->> NOTE: this library is note supported by Google; its exprimental...caveat emptor.
+>> NOTE: this library is note supported by Google
 
 Also see:
 
@@ -16,6 +16,7 @@ Also see:
 * [crypto: post-quantum support roadmap](https://github.com/golang/go/issues/64537)
 * Key Encapsulation [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final)
 * [Internet X.509 Public Key Infrastructure - Algorithm Identifiers for the Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM)](https://datatracker.ietf.org/doc/draft-ietf-lamps-kyber-certificates/08/)
+* [Post-Quantum Cryptography (PQC) scratchpad](https://github.com/salrashid123/pqc_scratchpad)
 
 ---
 
@@ -37,9 +38,22 @@ Also see:
 
 ### Key Generation
 
-This repo only support PEM encoded files which encodes the `bare-seed`.  See the [#openssl-key-formats](#openssl-key-formats) section below
+This repo only support PEM encoded files which encodes the `bare-seed`.  See the [#openssl-key-formats](#openssl-key-formats) section below.
 
-To generate a key, you need openssl 3.5.0+ which you can get in a dockerfile format at [Post-Quantum Cryptography (PQC) scratchpad](https://github.com/salrashid123/pqc_scratchpad)
+The PEM file itself is described in [draft-ietf-lamps-kyber-certificates-11](https://datatracker.ietf.org/doc/draft-ietf-lamps-kyber-certificates/11/) where just the `seed` is required (see seciton `C.1.2.1.  Seed Format`)
+
+To generate a key, you can either use [crypto/mlkem.GenerateKey768](https://pkg.go.dev/crypto/mlkem#GenerateKey768) or openssl 3.5.0+ which you can get in a dockerfile format at [Post-Quantum Cryptography (PQC) scratchpad](https://github.com/salrashid123/pqc_scratchpad).
+
+If you want to generate a new keypair in go, see [util/to_pem](uitl/to_pem) folder.
+
+```bash
+cd util/to_pem
+go run main.go --keyType=mlkem780 \
+   --private=priv-ml-kem-768-bare-seed.pem \
+   --public=pub-ml-kem-768-bare-seed.pem
+```
+
+or with openssl
 
 ```bash
 docker run -v /dev/urandom:/dev/urandom -ti salrashid123/openssl-pqs:3.5.0-dev
@@ -52,10 +66,10 @@ $ openssl genpkey  -algorithm mlkem768 \
    -provparam ml-kem.output_formats=bare-seed \
    -out priv-ml-kem-768-bare-seed.pem
 
-openssl pkey  -in priv-ml-kem-768-bare-seed.pem  -pubout -out pub-ml-kem-768.pem
+openssl pkey  -in priv-ml-kem-768-bare-seed.pem  -pubout -out pub-ml-kem-768-bare-seed.pem
 ```
 
-TODO: support [crypto/mlkem](https://pkg.go.dev/crypto/mlkem) keys converted `Binary()` and used as the inputs in addition to the openssl PEM format
+for go, 
 
 ### CLI
 
@@ -66,13 +80,13 @@ go build  -o go-pqc-wrapping cmd/main.go
 
 ## Encrypt
 ./go-pqc-wrapping --mode=encrypt \
- --key=file://`pwd`/example/certs/pub-ml-kem-768.pem \
- --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json --debug
+ --key=file://`pwd`/example/certs/pub-ml-kem-768-bare-seed.pem \
+ --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json
 
 ## decrypt
 ./go-pqc-wrapping  --mode=decrypt \
- --key=file://`pwd`/example/certs/bare-seed.pem \
- --in=/tmp/encrypted.json --out=/tmp/decrypted.txt --debug
+ --key=file://`pwd`/example/certs/bare-seed-768.pem \
+ --in=/tmp/encrypted.json --out=/tmp/decrypted.txt
 ```
 
 ### Library
@@ -122,7 +136,7 @@ cd example
 go run encrypt/main.go --publicKey=certs/pub-ml-kem-768.pem
 
 # Decrypt
-go run decrypt/main.go --privateKey="certs/bare-seed.pem"
+go run decrypt/main.go --privateKey="certs/bare-seed-768.pem"
 ```
 
 ### GCP KMS
@@ -191,7 +205,9 @@ cd example
 go run encrypt/main.go --publicKey=certs/pub-ml-kem-768-kms.pem
 
 # Decrypt
-go run decrypt_kms/main.go --kmsURI="gcpkms://projects/core-eso/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1"
+export PROJECT_ID=`gcloud config get-value core/project`
+go run decrypt_kms/main.go \
+   --kmsURI="gcpkms://projects/$PROJECT_ID/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1"
 ```
 
 ### Wrapped Key format
@@ -221,7 +237,7 @@ There are two levels of encryption involved with this library and is best descri
 
    outerKey, err := cipher.NewGCM(block)
 
-   wrappedRawKey = outerKey.Seal(nil, nonce, innerEncryptionKey, nil)
+   wrappedRawKey = outerKey.Seal(nil, nonce, innerEncryptionKey, aad)
    wrappedRawKey = append(nonce, wrappedRawKey...)
    ```
 
@@ -272,7 +288,7 @@ The keyfile is:
    block, err := aes.NewCipher(kemSharedSecret)
 	outerKey, err := cipher.NewGCM(block)
 
-   innerEncryptionKey, err := outerKey.Open(nil, nonce, wrappedRawKey,nil)
+   innerEncryptionKey, err := outerKey.Open(nil, nonce, wrappedRawKey,aad)
    ```
 
 1. Use `"github.com/hashicorp/go-kms-wrapping/v2"` decrypt the original plaintext.
@@ -309,25 +325,24 @@ $ go build  -ldflags="-s -w -X main.Tag=$(git describe --tags --abbrev=0) -X mai
 
 ### Openssl key formats
 
-Openssl PEM files encodes a custom 'format' prefix as shown [here](https://github.com/openssl/openssl/blob/ba90c491254fd3cee8a2f791fc191dcff27036c1/providers/implementations/encode_decode/ml_kem_codecs.c#L52C34-L52C38).
+Openssl PEM files encodes a custom 'format' prefix as shown [here](hhttps://github.com/openssl/openssl/blob/master/providers/implementations/encode_decode/ml_kem_codecs.c#L92).
 
 What this means is you need to account for this prefix.  For example, if you generated the key with a `seed-only`, the PEM file will have a prefix of `0x8040` for the raw key:
 
 ```bash
-$  openssl asn1parse -inform PEM -in  example/certs/seed-only.pem 
-    0:d=0  hl=2 l=  84 cons: SEQUENCE          
-    2:d=1  hl=2 l=   1 prim: INTEGER           :00
-    5:d=1  hl=2 l=  11 cons: SEQUENCE          
-    7:d=2  hl=2 l=   9 prim: OBJECT            :ML-KEM-768
-   18:d=1  hl=2 l=  66 prim: OCTET STRING      [HEX DUMP]:804067E6BC81C846808002CED71BBF8A8C4195AF2A37614C4C81C0B649601B29BEAA33CBFF214A0DC459749362C8B3D4DD7C754A0D611D51D3449C2FA47C1DC49C5E
-
-
-$  openssl asn1parse -inform PEM -in  example/certs/bare-seed.pem 
+$  openssl asn1parse -inform PEM -in  example/certs/bare-seed-768.pem 
     0:d=0  hl=2 l=  82 cons: SEQUENCE          
     2:d=1  hl=2 l=   1 prim: INTEGER           :00
     5:d=1  hl=2 l=  11 cons: SEQUENCE          
     7:d=2  hl=2 l=   9 prim: OBJECT            :ML-KEM-768
    18:d=1  hl=2 l=  64 prim: OCTET STRING      [HEX DUMP]:67E6BC81C846808002CED71BBF8A8C4195AF2A37614C4C81C0B649601B29BEAA33CBFF214A0DC459749362C8B3D4DD7C754A0D611D51D3449C2FA47C1DC49C5E
+
+$  openssl asn1parse -inform PEM -in  example/certs/seed-only-768.pem 
+    0:d=0  hl=2 l=  84 cons: SEQUENCE          
+    2:d=1  hl=2 l=   1 prim: INTEGER           :00
+    5:d=1  hl=2 l=  11 cons: SEQUENCE          
+    7:d=2  hl=2 l=   9 prim: OBJECT            :ML-KEM-768
+   18:d=1  hl=2 l=  66 prim: OCTET STRING      [HEX DUMP]:804067E6BC81C846808002CED71BBF8A8C4195AF2A37614C4C81C0B649601B29BEAA33CBFF214A0DC459749362C8B3D4DD7C754A0D611D51D3449C2FA47C1DC49C5E
 ```
 
 For a list of all prefixes:
@@ -342,6 +357,37 @@ static const ML_COMMON_PKCS8_FMT ml_kem_768_p8fmt[NUM_PKCS8_FORMATS] = {
     { "bare-seed",  0x0040, 4, 0,          0,      0, 0x40, 0,          0,    0,      0,      0,     },
 };
 ```
+
+Note, you can extract the `seed` from a key using openssl:
+
+```bash
+$ openssl pkey -in example/certs/seed-only-768.pem -text          
+      ML-KEM-768 Private-Key:
+      seed:
+         67:e6:bc:81:c8:46:80:80:02:ce:d7:1b:bf:8a:8c:
+         41:95:af:2a:37:61:4c:4c:81:c0:b6:49:60:1b:29:
+         be:aa:33:cb:ff:21:4a:0d:c4:59:74:93:62:c8:b3:
+         d4:dd:7c:75:4a:0d:61:1d:51:d3:44:9c:2f:a4:7c:
+         1d:c4:9c:5e
+```
+
+Which as hex is `67E6BC81C846808002CED71BBF8A8C4195AF2A37614C4C81C0B649601B29BEAA33CBFF214A0DC459749362C8B3D4DD7C754A0D611D51D3449C2FA47C1DC49C5E`
+
+For reference, the `example/util` folder contains two standalone examples of marshalling and unmarshalling the PEM formatted `bare-seed` 
+
+* `example/util/to_pem/main.go`
+
+  Generate a new mkKEM key in go and convert it to public private `bare-seed` PEM format
+
+```bash
+  go run util/to_pem/main.go -private /tmp/private.pem -public /tmp/public.pem
+  go run encrypt/main.go -publicKey /tmp/public.pem
+  go run decrypt/main.go -privateKey /tmp/private.pem
+```
+
+* `example/util/from_pem/main.go`
+
+  Read `bare-seed` PEM formatted keys and use go to wrap/unwrap
 
 #### Ml-KEM x509 Certificate
 

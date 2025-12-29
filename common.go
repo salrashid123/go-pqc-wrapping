@@ -12,9 +12,9 @@ var (
 )
 
 type pkixPrivKey struct {
-	Version    int
+	Version    int `asn1:"version:0"`
 	Algorithm  pkix.AlgorithmIdentifier
-	PrivateKey []byte
+	PrivateKey asn1.RawContent
 }
 
 type pkixPubKey struct {

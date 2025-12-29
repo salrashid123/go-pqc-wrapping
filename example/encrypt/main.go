@@ -16,7 +16,7 @@ import (
 const ()
 
 var (
-	publicKey     = flag.String("publicKey", "certs/pub-ml-kem-768.pem", "Public Key")
+	publicKey     = flag.String("publicKey", "certs/pub-ml-kem-768-bare-seed.pem", "Public Key")
 	dataToEncrypt = flag.String("dataToEncrypt", "foo", "data to encrypt")
 	encryptedBlob = flag.String("encryptedBlob", "/tmp/encrypted.json", "Encrypted Blob")
 )

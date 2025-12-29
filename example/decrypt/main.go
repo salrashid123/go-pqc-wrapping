@@ -14,7 +14,7 @@ import (
 const ()
 
 var (
-	privateKey    = flag.String("privateKey", "certs/bare-seed.pem", "PrivateKey Key (bare seed only)")
+	privateKey    = flag.String("privateKey", "certs/bare-seed-768.pem", "PrivateKey Key (bare seed only)")
 	encryptedBlob = flag.String("encryptedBlob", "/tmp/encrypted.json", "Encrypted Blob")
 )
 

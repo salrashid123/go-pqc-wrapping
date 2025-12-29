@@ -15,16 +15,22 @@ import (
 
 const (
 	kmsPrivateKey = "gcpkms://projects/core-eso/locations/global/keyRings/kem_kr/cryptoKeys/kem_key_1/cryptoKeyVersions/1"
+	kmsPublicKey  = "example/certs/pub-ml-kem-768-kms.pem"
+
+	bareSeedPublicPEM768  = "example/certs/pub-ml-kem-768-bare-seed.pem"
+	bareSeedPrivatePEM768 = "example/certs/bare-seed-768.pem"
+
+	seedPrivPrivatePEM768 = "example/certs/seed-only-768.pem"
 )
 
 func TestEncryptDecrypt768(t *testing.T) {
 
 	ctx := context.Background()
 
-	pubBytes, err := os.ReadFile("example/certs/pub-ml-kem-768.pem")
+	pubBytes, err := os.ReadFile(bareSeedPublicPEM768)
 	require.NoError(t, err)
 
-	privBytes, err := os.ReadFile("example/certs/bare-seed.pem")
+	privBytes, err := os.ReadFile(bareSeedPrivatePEM768)
 	require.NoError(t, err)
 
 	keyName := "bar"
@@ -65,10 +71,10 @@ func TestEncryptDecrypt768Fail(t *testing.T) {
 
 	ctx := context.Background()
 
-	pubBytes, err := os.ReadFile("example/certs/pub-ml-kem-768.pem")
+	pubBytes, err := os.ReadFile(bareSeedPublicPEM768)
 	require.NoError(t, err)
 
-	privBytes, err := os.ReadFile("example/certs/seed-only.pem")
+	privBytes, err := os.ReadFile(seedPrivPrivatePEM768)
 	require.NoError(t, err)
 
 	keyName := "bar"
@@ -106,7 +112,7 @@ func TestEncryptDecryptKMS768(t *testing.T) {
 
 	ctx := context.Background()
 
-	pubBytes, err := os.ReadFile("example/certs/pub-ml-kem-768-kms.pem")
+	pubBytes, err := os.ReadFile(kmsPublicKey)
 	require.NoError(t, err)
 
 	keyName := "bar"
