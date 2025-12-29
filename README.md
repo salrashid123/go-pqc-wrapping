@@ -1,4 +1,4 @@
-## Go-PQC-Wrapping - Go library for encrypting data using Post Quantum Cryptography (PQC)
+## Go library and CLI for encrypting data using Post Quantum Cryptography (PQC)
 
 This is a simple go library and cli using `ML-KEM` to wrap encrypt/decrypt arbitrary data.  
 
@@ -44,7 +44,7 @@ The PEM file itself is described in [draft-ietf-lamps-kyber-certificates-11](htt
 
 To generate a key, you can either use [crypto/mlkem.GenerateKey768](https://pkg.go.dev/crypto/mlkem#GenerateKey768) or openssl 3.5.0+ which you can get in a dockerfile format at [Post-Quantum Cryptography (PQC) scratchpad](https://github.com/salrashid123/pqc_scratchpad).
 
-If you want to generate a new keypair in go, see [util/to_pem](uitl/to_pem) folder.
+If you want to generate a new keypair in go, see [example/util](example/util) folder.
 
 ```bash
 cd util/to_pem
