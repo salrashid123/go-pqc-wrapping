@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync/atomic"
 
@@ -61,26 +60,9 @@ func (s *PQCWrapper) SetConfig(_ context.Context, opt ...wrapping.Option) (*wrap
 	}
 
 	s.userAgent = opts.withUserAgent
-	switch {
-	case os.Getenv(EnvPublicKey) != "" && !opts.Options.WithDisallowEnvVars:
-		s.publicKey = os.Getenv(EnvPublicKey)
-	case opts.withPublicKey != "":
-		s.publicKey = opts.withPublicKey
-	}
-
-	switch {
-	case os.Getenv(EnvPrivateKey) != "" && !opts.Options.WithDisallowEnvVars:
-		s.privateKey = os.Getenv(EnvPrivateKey)
-	case opts.withPrivateKey != "":
-		s.privateKey = opts.withPrivateKey
-	}
-	switch {
-	case os.Getenv(EnvKeyName) != "" && !opts.Options.WithDisallowEnvVars:
-		s.keyName = os.Getenv(EnvKeyName)
-	case opts.withKeyName != "":
-		s.keyName = opts.withKeyName
-	}
-
+	s.publicKey = opts.withPublicKey
+	s.privateKey = opts.withPrivateKey
+	s.keyName = opts.withKeyName
 	s.kmsKey = opts.withKMSKey
 	s.debug = opts.withDebug
 
@@ -89,6 +71,7 @@ func (s *PQCWrapper) SetConfig(_ context.Context, opt ...wrapping.Option) (*wrap
 	wrapConfig.Metadata = make(map[string]string)
 	wrapConfig.Metadata[KeyName] = s.keyName
 	wrapConfig.Metadata[PublicKey] = s.publicKey
+
 	//wrapConfig.Metadata[PrivateKey] = s.privateKey
 
 	return wrapConfig, nil

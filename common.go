@@ -24,13 +24,6 @@ type pkixPubKey struct {
 }
 
 const (
-	EnvPublicKey  = "PQC_PUBLIC_KEY"
-	EnvPrivateKey = "PQC_PRIVATE_KEY"
-	EnvKeyName    = "PQC_KEY_NAME"
-
-	EnvDEBUG  = "PQC_DEBUG"
-	EnvKMSKey = "PQC_KMS_KEY"
-
 	KeyName    = "key_name"
 	PublicKey  = "public_key"
 	PrivateKey = "private_key"
