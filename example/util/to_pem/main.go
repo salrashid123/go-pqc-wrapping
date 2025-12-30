@@ -42,7 +42,7 @@ func main() {
 	var privteKeyBytes []byte
 	var publicKeyBytes []byte
 	switch *keyType {
-	case "mlkem780":
+	case "mlkem768":
 
 		// generate key
 		nk, err := mlkem.GenerateKey768()

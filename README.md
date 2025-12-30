@@ -48,7 +48,7 @@ If you want to generate a new keypair in go, see [example/util](example/util) fo
 
 ```bash
 cd util/to_pem
-go run main.go --keyType=mlkem780 \
+go run main.go --keyType=mlkem768 \
    --private=priv-ml-kem-768-bare-seed.pem \
    --public=pub-ml-kem-768-bare-seed.pem
 ```
@@ -327,7 +327,7 @@ $ go build  -ldflags="-s -w -X main.Tag=$(git describe --tags --abbrev=0) -X mai
 
 Openssl PEM files encodes a custom 'format' prefix as shown [here](hhttps://github.com/openssl/openssl/blob/master/providers/implementations/encode_decode/ml_kem_codecs.c#L92).
 
-What this means is you need to account for this prefix.  For example, if you generated the key with a `seed-only`, the PEM file will have a prefix of `0x8040` for the raw key:
+For example, if you generated the key with a `seed-only`, the PEM file will have a prefix of `0x8040` for the raw key:
 
 ```bash
 $  openssl asn1parse -inform PEM -in  example/certs/bare-seed-768.pem 
@@ -372,6 +372,44 @@ $ openssl pkey -in example/certs/seed-only-768.pem -text
 ```
 
 Which as hex is `67E6BC81C846808002CED71BBF8A8C4195AF2A37614C4C81C0B649601B29BEAA33CBFF214A0DC459749362C8B3D4DD7C754A0D611D51D3449C2FA47C1DC49C5E`
+
+Since this repo only supports the `bare-seed` key, you'll need to convert it
+
+```bash
+## create a key with default seed-priv (implicitly by default or by specifying  ml-kem.output_formats )
+openssl genpkey  -algorithm mlkem768   -out priv-ml-kem-768-seed-priv.pem
+openssl asn1parse -in priv-ml-kem-768-seed-priv.pem
+
+openssl genpkey  -algorithm mlkem768 \
+   -provparam ml-kem.output_formats=seed-priv \
+   -out priv-ml-kem-768-seed-priv.pem
+openssl asn1parse -in priv-ml-kem-768-seed-priv.pem
+
+## print the  seed
+openssl pkey -in priv-ml-kem-768-seed-priv.pem -text  
+
+   ML-KEM-768 Private-Key:
+   seed:
+      bf:bd:29:76:bd:01:87:e3:75:0e:5c:46:4e:fc:e0:
+      5a:0a:b6:ca:0a:b4:0c:f7:c4:90:08:1b:54:83:1f:
+      12:18:25:50:15:7f:49:e0:24:7b:92:b7:b9:b2:de:
+      49:21:74:53:71:9a:81:71:c6:cd:15:83:23:da:d2:
+      c6:6d:ef:2b
+
+### now convert
+openssl pkey -in priv-ml-kem-768-seed-priv.pem  -provparam ml-kem.output_formats=bare-seed -out priv-ml-kem-768-bare-seed.pem
+
+### and veify the seed is the same
+openssl pkey -in priv-ml-kem-768-bare-seed.pem -text
+   ML-KEM-768 Private-Key:
+   seed:
+      bf:bd:29:76:bd:01:87:e3:75:0e:5c:46:4e:fc:e0:
+      5a:0a:b6:ca:0a:b4:0c:f7:c4:90:08:1b:54:83:1f:
+      12:18:25:50:15:7f:49:e0:24:7b:92:b7:b9:b2:de:
+      49:21:74:53:71:9a:81:71:c6:cd:15:83:23:da:d2:
+      c6:6d:ef:2b
+```
+
 
 For reference, the `example/util` folder contains two standalone examples of marshalling and unmarshalling the PEM formatted `bare-seed` 
 
