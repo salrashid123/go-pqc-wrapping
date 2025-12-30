@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	pqcwrap "github.com/salrashid123/go-pqc-wrapping"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -40,7 +41,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt))
+	aad := []byte("myaad")
+
+	blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt), wrapping.WithAad(aad))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error encrypting %v\n", err)
 		os.Exit(1)

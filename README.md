@@ -79,12 +79,12 @@ Prebuilt, signed binaries can be found under the [Releases](https://github.com/s
 go build  -o go-pqc-wrapping cmd/main.go
 
 ## Encrypt
-./go-pqc-wrapping --mode=encrypt \
+./go-pqc-wrapping --mode=encrypt --aad=myaad \
  --key=file://`pwd`/example/certs/pub-ml-kem-768-bare-seed.pem \
  --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json
 
 ## decrypt
-./go-pqc-wrapping  --mode=decrypt \
+./go-pqc-wrapping  --mode=decrypt --aad=myaad \
  --key=file://`pwd`/example/certs/bare-seed-768.pem \
  --in=/tmp/encrypted.json --out=/tmp/decrypted.txt
 ```
@@ -101,7 +101,7 @@ To encrypt, you need to provide the PEM format of the ML-KEM public key:
 	wrapper := pqcwrap.NewWrapper()
 	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(pubPEMBytes)), pqcwrap.WithKeyName("myname"))
 
-	blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt))
+	blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt), wrapping.WithAad([]byte("myaad")))
 
 	fmt.Printf("Encrypted: %s\n", base64.StdEncoding.EncodeToString(blobInfo.Ciphertext))
 ```
@@ -121,7 +121,7 @@ To decrypt, you need to provide the PEM `bare-seed` format of the public key.
 	newBlobInfo := &wrapping.BlobInfo{}
 	err = protojson.Unmarshal(b, newBlobInfo)
 
-	plaintext, err := wrapper.Decrypt(ctx, newBlobInfo)
+	plaintext, err := wrapper.Decrypt(ctx, newBlobInfo, wrapping.WithAad([]byte("myaad")))
 
 	fmt.Printf("Decrypted %s\n", string(plaintext))
 ```
