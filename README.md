@@ -36,7 +36,7 @@ Also see:
 
 ## Usage
 
-If you want to encrypt data intended for a remote system, the remote system must first generate an ML-KEM key pair and share the public key
+If you want to encrypt data intended for a remote system, the remote system must first generate an `ML-KEM` key pair and share the public key
 
 If Bob wants to encrypt data for Alice
 
@@ -44,24 +44,22 @@ Alice generates `MK-KEM` keypair (`pub.pem`, `priv.pem`)
 
 Alice shares `pub.pem` with Bob
 
-  Encrypt (Bob):
+Encrypt (Bob):
 
-  1. generate aead `[key]`
-  2. `cipherText = AEAD_Encrypt( key, plaintext )`
-  3. get encapsulation data 
+1. generate encapsulation data 
+   
+   `kemSharedSecret, kemCipherText = ML_KEM_Encapsulate( pub.pem )` 
 
-     `kemSharedSecret, kemCipherText = ML_KEM_Encapsulate( pub.pem )` 
+2. Use `kemSharedSecret` as the AEAD key to encrypt `plainText`
 
-  4. `wrapped_key = AEAD_Encrypt( kemSharedSecret, key )`
-  5.  Bob sends `[ kemCipherText, wrapped_key, cipherText ]` to Alice
+   `cipherText = AEAD_Encrypt( kemSharedSecret, plainText )`
 
-  Decrypt (Alice):
+3.  Bob sends `[ kemCipherText, cipherText ]` to Alice
 
-  1. `kemSharedSecret = ML_KEM_Decapsulate( priv.pem, kemCipherText )`
-  2. `key = AEAD_Decrypt( kemSharedSecret, wrapped_key )`
-  3. `plaintext = AEAD_Decrypt( key, cipherText )`
+Decrypt (Alice):
 
-Note the reason why the `plaintext` is not encrypted directly by `kemSharedSecret` is because the underlying library [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) automatically generates `key` for you.  In the end, we have two layers of encryption here.
+4. `kemSharedSecret = ML_KEM_Decapsulate( priv.pem, kemCipherText )`
+5. `plaintext = AEAD_Decrypt( kemSharedSecret, cipherText )`
 
 
 ### Key Generation
@@ -262,62 +260,47 @@ There are two levels of encryption involved with this library and is best descri
 
 **Encrypt(plaintext, kemPublicKey)**
 
-1. Use `"github.com/hashicorp/go-kms-wrapping/v2"` encrypt the original plaintext.
-   ```golang
-   env, err := wrapping.EnvelopeEncrypt(plaintext, opt...)
-   innerEncryptionKey := env.Key
-   innerIV := env.Iv
-   innerCipherText := env.Ciphertext
-   ```
+1. Read the `ML-KEM` Public key and generate `sharedCiphertext` and `sharedSecret`
 
-2. Read the `ML-KEM` Public key and generate `sharedCiphertext` and `sharedSecret`
    ```golang
    ek, err := mlkem.NewEncapsulationKey768(pkix.PublicKey.Bytes)
    kemSharedSecret, kemCipherText = ek.Encapsulate()
    ```
 
-3. Create new AES-GCM key using `sharedSecret` as the key and encrypt `innerEncryptionKey`.  No KDF is needed (see [section 3.2](https://datatracker.ietf.org/doc/draft-connolly-cfrg-hpke-mlkem/))
+2. Create new *direct* aead wrapper using `wrapaead "github.com/hashicorp/go-kms-wrapping/v2/aead"` and set  `kemSharedSecret` as the key.
 
    ```golang
-   block, err := aes.NewCipher(kemSharedSecret)
-
-   outerKey, err := cipher.NewGCM(block)
-
-   wrappedRawKey = outerKey.Seal(nil, nonce, innerEncryptionKey, aad)
-   wrappedRawKey = append(nonce, wrappedRawKey...)
+	w := wrapaead.NewWrapper()
+	err := w.SetAesGcmKeyBytes(kemSharedSecret)
+	cipherText, _ := w.Encrypt(ctx, plaintext, opt...)
    ```
 
 
-So when you encrypt data, the original `innerCipherText` and wrapped `innerEncryptionKey` itself is saved in json format:
-
-* `ciphertext`: the encrypted data using the inner key provided by `go-kms-wrapping` library (step 1)
-* `wrappedKey`: the ML-KEM `sharedCiphertext` and the encrypted from of the inner key (step 2,3)
+* `ciphertext`: the encrypted data wrapped using `kemSharedSecret` 
+* `wrappedKey`: the ML-KEM `sharedCiphertext`
 
 ```json
 {
-	"ciphertext": "IXjZAsQCpzxSOKIaDOcsDEu0DQ==",
-	"iv": "UGNX2IzIPzJ+XwPG",
+	"ciphertext": "bQAifHrc2qo1WRpGW6vyWlKHd2QeTSt1WZZOxlHj7g==",
 	"keyInfo": {
-		"keyId": "mykey",
-		"wrappedKey": "eyJuYW1lIjoibXlrZXkiLCAidmVyc2lvbiI6MSwgInR5cGUiOiJtbF9rZW1fNzY4IiwgImtlbUNpcGhlclRleHQiOiIvbG5lMGRGKy9GL0tXdk1rK2hlZHJOZXorcllweTBVQlBlUkZrZ1V2TTUrY0dNNU9wSUt0c3NTc1ZkMEpxUXFZVzAzdUYrOTRSS1hsMURTN3pXREFzV2lzL28wcjRaQldKci9rNWlmMDRySVpqQ0lsb3FLRG9BbGhyZ0NmcVh6WG5PakF3T09UWkVRNDRZWlN3bVhoZmtieEtKUmFuV3ZjM0o1YlV3eUVyY0FnczlpbDdtY2RyTkVHM21wTk9zcmx5N2VSdGw5UFhVZ2VNWTBxeHE1dzJhdFpvUUxlK1BJWVRpcEdoK1FDYlpJNUlyamF1OUlhWWpteWNSdStTbmh4MWkzbUhxNHUrTVdGOTFFUmhyOU1RWUdYVHpoNmZCeVJCaUtIMVlnSGFZbUZXUUhuU0JOZ0pKWDdjTkt1eFVSQ1NsSU1KSWRTUUtoWk4wMkJEbWVsNTlMTnBxbStWaUNFRUdZZ0dXS3Vkam5VQTNGY1cyais2Q0JGZDdLdzhhZHZRa3drOThMN3c1ekl2Q05CbFVCNXRTcjZXMEcxVHo5NU9NVHBPVVpEYXd0OTh5NmRuZkZZMTlVYnBkd3BiNU5ib0FUd3kva041VHE4RjY5N0I1alZSZktDTEduWWozaVY3eDJLdkxwUXNoYjY2ajhrM0h2Mm12Y3VtYjVLSVF5UEpGSXRqaTlGK3JwS1lLU2MwZjhvVkpObkd4bVM0N2ZWUGhsZWt3OWw5dlBuNHNZTkpXRldFYjIwOGtOWEpJR05WWVVoTHBZVEVuY0xTVDRGaXkyTkpBYW5BdTJNZEtqOVVyOW03SzFkYXlBMXFpMzRXOGtrTnVTamp1ZzF1S3dvUDcxNFJoRjZJS3dZUUNabVA1bDdZUElDWGk3T2FLV3AxZDl5ODNlUkowaUhtVytJUWRtZmpuTzJ4TSt5YjRCeUQ0UWk3TDd1QVhnSEpSS09kNERXTWNWMW1PSjZnUkdibzI4VGlZM2dCS2VrM0QxbkxDTzRXb2gvSlJ1SU00VjM2ZlRwRG1QOEd4NVFmNVdoaGtjSzQvNnhqRE5IeDQ4YU54b3RQdWs5RXZFb1ZscVd1OWF0SVN4UHdzZ0ZBbS9wTWdmQjhFQTcySlFzNmZDN0xocFc2WnpYRGI1Wk5hT3RnTVBscG9tb01qeS9kYzUreWxDQzJzQUVuVThVaENXY1U0MjF3M0VQbktucFJCdzNaYk8ycWYyZ1ZmSldXRURpQ1JWd1NhM1JJbTNlTjI2N05UM3d1a0pNTUYxVzh0SnUyb1cvbXI5K01TSVF5M3FkLzlKRm9xbDdMakdSUGFkTXMvSEpVQ05DN2hwbmFXTGZVZG8yMDRock80Y1d3bHN5RFcybnRHenJ0QTIvSFFYeEhsT0pYbUhKNHN3NkhqWDZlMjFkdTI3NXArMWllVE1UNTc2L2lJRTJVTFhVQVEwSHFDYWkrbWoyTmdFQkVGR3dLNzVkaG9wWStSL3Rlb0dkNzFTOXI0cEp6cVJGVDIxM1UxZ3JmWjhnNFppcTZGOXFmdndkOXJMdzB0QkZ2d1JJWDBuTEcweGU2VmlzM0pIKy9CZ25NNzNQNmZ4K2xLaCtXLzdwdDROZ1U5b1Q3dlM1czNiUTNPNEpOWGZma2lORDN0UC9tR3ZHOTF2T0RTaFF4cldmZmFMY1RmbGRMNjVCS0luU0o1SExreWJDdUd2NFdkL21JeEIrazRKSklsemFPblJQOFpVN1lXaUJJRWpjWm8yMlVxOEEvbzUrWWNpenh6aEcxNzl0ZnJFd1FjT2FvaWxZWDdxZnlpVklKSTBDWXR0OU1VWU43TFFxdzVldE1GdEJuN2FCMkc2aTVVWDg0Q3ozcXBUcEdsd001ZXF2MkYwTHBrVFcrM1ZZSm9qaWQ2RXY1WnRWVURhZUw4UmN0NEtUanRPaVBIZz0iLCAid3JhcHBlZFJhd0tleSI6InN1cXdGM3FCK0VlWUY0bkJsbXIyT3V2aHNUZ0d5SjVFdkJRVG84YU1TSldja0JWazFBc0hNZ3VURTRYSXhTcjNabC9MQlYzUldtNHhpandJIn0="
+		"keyId": "myname",
+		"wrappedKey": "eyJuYW1lIjoibXluYW1lIiwidmVyc2lvbiI6MSwidHlwZSI6Im1sX2tlbV83NjgiLCJrZW1DaXBoZXJUZXh0IjoiMk4yRldVeGtWdUtDY21RU1o3VDQ0amlrZkIrb2ZnTmZvVE0vMERudUJoREhvNG1ORnJYb2xMUndraGNqRG12Nk00WWt5b2JncElLTWRuOTVHUmk2WG0vRE15ZTBDNEdyRFEweCtRcU9vRndLYU9kK05wT2ZQNG1ERWRWK2EzdHlMREk2djVxSGRhMFZkSWNaMk5oMDZDOGkxQjlFNGNXcU1MRlh4VW5QTkUzY1EwS2RSZVA2RVZyQm0rNjRQRzdNSGZLVjEzdkQ3UUZIWGtMR2pUR0Jodk9IMWxPWWp2YStLZGdCSWlkMFV3MllDVjZuWFVQMHUyZC9xcHZqVURUMG1wN3FwVndlRExFWUxOWjNxbElFQTVPWXgydnMrYmpwa2NLYjR6WGN4dVhEcWhmZzZvRVEyMUtFa0dhOEtIWUdDVFB5cG5PUzZtclBHdGZOelJFTDllaG04cjVJNHE5U2xQUWUyM2MwZmp3d1BNSzVUOGJ2ZUFVT1RjZENmZ0RWcXptaU8zSWZTVzI5NmpPeXVMUzFOWitGVk9OYzZpeHhwUDNLT3hKUzVrTWF5d09BYndDSHh4YzZ0eTdjYVNScGlpY05Jak8rS3g4Mm91L0dJSE9aSE1qZ2dpbjQvMnRxTkNKVTMwakp2MDZXMnhFUE5rRkZWVjVESkpydDJEVnE4SW1TQ2ppd0NHYkxiQ1c4Q3lMRTY3T01LZTVuZ0FNbTdaTCtoYXdDYUcwWjRGYklhSWZXR3J0WVAwdFYrcW9tbTNDS09icVBIOUZ3bHg2YXRncy83SEsvNUNCN1lZeHN5ZjBnaUg0eExCRE1xMTBqdTVkMWxSbFBHNEhPanNDK0VSR1ljS2lxNnhFZkhucDJGdTI2ejhJdHN6QkxDV21YM2d2V2Z2T052ZTYvVkVNS2d0azBiaEtyTG5tdC9OQjNRTGpxbGZHUXZIRGtoRFNtNldPbmxpVGpvUzZLWVpYSGRPdmtZOTk0b2xXV2JobDBpU01mbUtvdW1JNUJNamFjMnN5bzJlZEs4dGtKZWx5YVEybStBM01IV2p5YkY0NVFMblB3NkxKMjJuUEVzanJRZ3RxR0c3NS92K0lITzBTSHUwSENpaHFNNmJ2U0VQN0VrV3FZSWx4RmVVeFB3TGMyNDMwWURHSG5kejgvWnIxcWdjY1Rycm9oTEI3dkRiOGlvNXI5bkNQMDZXaElnZ0c4SnJFaGhLa01ML3ZZblY0bmt0a0diLysvZjFZTjRiRklPMEVrOU1IeFpmYnJYZXl0U2VkQnZoWERMRUxhczN4NGw1VXYyMVZyNDh6aXAwRm9YV2RBSVVYL2RXOW11V0hhTWhndkd4b2pCS2ZVN0h2b3FZNUNCZUZ4cFhidWxtYi9sQlAwTllCSkQ5UVdjdU5MVEdBWjh5eXFjMzJFWG1qOCt6M2lnQjFWNTVBNWFmU0FESW9vTW9qd05nUmMyQStsT2Frcm5rMGZ6NERSaXpLU2xhUklyVVVFR2xQVlBtNFVya1pGTEZQZzlZY3B1WllpTEFjMkRIdklDMGhic2lRYUNQV051cm1XMzdmOHBDM1o3OS9ORVNHUkp5WUd3MmIwaVNzSDdFTStXMWtqaVUvZHA5UWRadkxHVjhYaEhMaHZSbXkwaDdnUmZJbnpjRVpxZnlKNklvc2NRY2U4b2RrbmIyMWlzcy9TZ3lKeUdCdVJ0bGV5cEt1UVRLeFVJVWVmVVkrUVZ6MENwZzVCOVl3bjNhK3VBYStrNjlQVldQZjFISW1ydVV0VTBtMUtiTitvQ1dRMHIwdy9LemUyVURERGJac0huOGlKS0FWV2J3b1BHRXlxUFNBM0xpaGVrNnJGektxODd5N2pWaU9YU0hiOTU4WGtSLzZxalFhVG5ZUWZVc3JzN1RPNDd3Y2pUMDB4cTluNGNUWTJmWUE9In0="
 	}
 }
 ```
 
 If you base64decode the `wrappedKey`
 
-* `kemCipherText` the `ML-KEM` ciphertext (eg `sharedCiphertext`). Once this is decapsulated, this becomes an AES GCM outerKey
-* `wrappedRawKey` AES-GCM encrypted innerkey which was encrypted itself by the outerKey.  When this value is decrypted gives, this is the key associated with the original ciphertext
-
+* `kemCipherText` the `ML-KEM` ciphertext (eg `sharedCiphertext`). Once this is decapsulated, this becomes an AES GCM
 
 The keyfile is:
+
 ```json
 {
-  "name": "mykey",
+  "name": "myname",
   "version": 1,
   "type": "ml_kem_768",
-  "kemCipherText": "/lne0dF+/F/KWvMk+hedrNez+rYpy0UBPeRFkgUvM5+cGM5OpIKtssSsVd0JqQqYW03uF+94RKXl1DS7zWDAsWis/o0r4ZBWJr/k5if04rIZjCIloqKDoAlhrgCfqXzXnOjAwOOTZEQ44YZSwmXhfkbxKJRanWvc3J5bUwyErcAgs9il7mcdrNEG3mpNOsrly7eRtl9PXUgeMY0qxq5w2atZoQLe+PIYTipGh+QCbZI5Irjau9IaYjmycRu+Snhx1i3mHq4u+MWF91ERhr9MQYGXTzh6fByRBiKH1YgHaYmFWQHnSBNgJJX7cNKuxURCSlIMJIdSQKhZN02BDmel59LNpqm+ViCEEGYgGWKudjnUA3FcW2j+6CBFd7Kw8advQkwk98L7w5zIvCNBlUB5tSr6W0G1Tz95OMTpOUZDawt98y6dnfFY19Ubpdwpb5NboATwy/kN5Tq8F697B5jVRfKCLGnYj3iV7x2KvLpQshb66j8k3Hv2mvcumb5KIQyPJFItji9F+rpKYKSc0f8oVJNnGxmS47fVPhlekw9l9vPn4sYNJWFWEb208kNXJIGNVYUhLpYTEncLST4Fiy2NJAanAu2MdKj9Ur9m7K1dayA1qi34W8kkNuSjjug1uKwoP714RhF6IKwYQCZmP5l7YPICXi7OaKWp1d9y83eRJ0iHmW+IQdmfjnO2xM+yb4ByD4Qi7L7uAXgHJRKOd4DWMcV1mOJ6gRGbo28TiY3gBKek3D1nLCO4Woh/JRuIM4V36fTpDmP8Gx5Qf5WhhkcK4/6xjDNHx48aNxotPuk9EvEoVlqWu9atISxPwsgFAm/pMgfB8EA72JQs6fC7LhpW6ZzXDb5ZNaOtgMPlpomoMjy/dc5+ylCC2sAEnU8UhCWcU421w3EPnKnpRBw3ZbO2qf2gVfJWWEDiCRVwSa3RIm3eN267NT3wukJMMF1W8tJu2oW/mr9+MSIQy3qd/9JFoql7LjGRPadMs/HJUCNC7hpnaWLfUdo204hrO4cWwlsyDW2ntGzrtA2/HQXxHlOJXmHJ4sw6HjX6e21du275p+1ieTMT576/iIE2ULXUAQ0HqCai+mj2NgEBEFGwK75dhopY+R/teoGd71S9r4pJzqRFT213U1grfZ8g4Ziq6F9qfvwd9rLw0tBFvwRIX0nLG0xe6Vis3JH+/BgnM73P6fx+lKh+W/7pt4NgU9oT7vS5s3bQ3O4JNXffkiND3tP/mGvG91vODShQxrWffaLcTfldL65BKInSJ5HLkybCuGv4Wd/mIxB+k4JJIlzaOnRP8ZU7YWiBIEjcZo22Uq8A/o5+YcizxzhG179tfrEwQcOaoilYX7qfyiVIJI0CYtt9MUYN7LQqw5etMFtBn7aB2G6i5UX84Cz3qpTpGlwM5eqv2F0LpkTW+3VYJojid6Ev5ZtVUDaeL8Rct4KTjtOiPHg=",
-  "wrappedRawKey": "suqwF3qB+EeYF4nBlmr2OuvhsTgGyJ5EvBQTo8aMSJWckBVk1AsHMguTE4XIxSr3Zl/LBV3RWm4xijwI"
+  "kemCipherText": "2N2FWUxkVuKCcmQSZ7T44jikfB+ofgNfoTM/0DnuBhDHo4mNFrXolLRwkhcjDmv6M4YkyobgpIKMdn95GRi6Xm/DMye0C4GrDQ0x+QqOoFwKaOd+NpOfP4mDEdV+a3tyLDI6v5qHda0VdIcZ2Nh06C8i1B9E4cWqMLFXxUnPNE3cQ0KdReP6EVrBm+64PG7MHfKV13vD7QFHXkLGjTGBhvOH1lOYjva+KdgBIid0Uw2YCV6nXUP0u2d/qpvjUDT0mp7qpVweDLEYLNZ3qlIEA5OYx2vs+bjpkcKb4zXcxuXDqhfg6oEQ21KEkGa8KHYGCTPypnOS6mrPGtfNzREL9ehm8r5I4q9SlPQe23c0fjwwPMK5T8bveAUOTcdCfgDVqzmiO3IfSW296jOyuLS1NZ+FVONc6ixxpP3KOxJS5kMaywOAbwCHxxc6ty7caSRpiicNIjO+Kx82ou/GIHOZHMjggin4/2tqNCJU30jJv06W2xEPNkFFVV5DJJrt2DVq8ImSCjiwCGbLbCW8CyLE67OMKe5ngAMm7ZL+hawCaG0Z4FbIaIfWGrtYP0tV+qomm3CKObqPH9Fwlx6atgs/7HK/5CB7YYxsyf0giH4xLBDMq10ju5d1lRlPG4HOjsC+ERGYcKiq6xEfHnp2Fu26z8ItszBLCWmX3gvWfvONve6/VEMKgtk0bhKrLnmt/NB3QLjqlfGQvHDkhDSm6WOnliTjoS6KYZXHdOvkY994olWWbhl0iSMfmKoumI5BMjac2syo2edK8tkJelyaQ2m+A3MHWjybF45QLnPw6LJ22nPEsjrQgtqGG75/v+IHO0SHu0HCihqM6bvSEP7EkWqYIlxFeUxPwLc2430YDGHndz8/Zr1qgccTrrohLB7vDb8io5r9nCP06WhIggG8JrEhhKkML/vYnV4nktkGb/+/f1YN4bFIO0Ek9MHxZfbrXeytSedBvhXDLELas3x4l5Uv21Vr48zip0FoXWdAIUX/dW9muWHaMhgvGxojBKfU7HvoqY5CBeFxpXbulmb/lBP0NYBJD9QWcuNLTGAZ8yyqc32EXmj8+z3igB1V55A5afSADIooMojwNgRc2A+lOakrnk0fz4DRizKSlaRIrUUEGlPVPm4UrkZFLFPg9YcpuZYiLAc2DHvIC0hbsiQaCPWNurmW37f8pC3Z79/NESGRJyYGw2b0iSsH7EM+W1kjiU/dp9QdZvLGV8XhHLhvRmy0h7gRfInzcEZqfyJ6IoscQce8odknb21iss/SgyJyGBuRtleypKuQTKxUIUefUY+QVz0Cpg5B9Ywn3a+uAa+k69PVWPf1HImruUtU0m1KbN+oCWQ0r0w/Kze2UDDDbZsHn8iJKAVWbwoPGEyqPSA3Lihek6rFzKq87y7jViOXSHb958XkR/6qjQaTnYQfUsrs7TO47wcjT00xq9n4cTY2fYA="
 }
 ```
 
@@ -329,26 +312,13 @@ The keyfile is:
    kemSharedSecret, err = dk.Decapsulate(wrappb.KemCipherText)
    ```
 
-2. Initialize the outer AES-GCM Wrapper using the `kemSharedSecret` and decrypt `wrappedRawKey`
+2. Create new *direct* aead wrapper using `wrapaead "github.com/hashicorp/go-kms-wrapping/v2/aead"` and set  `kemSharedSecret` as the key.
+
    ```golang
-   block, err := aes.NewCipher(kemSharedSecret)
-	outerKey, err := cipher.NewGCM(block)
-
-   innerEncryptionKey, err := outerKey.Open(nil, nonce, wrappedRawKey,aad)
+	w := wrapaead.NewWrapper()
+	err := w.SetAesGcmKeyBytes(kemSharedSecret)
+	cipherText, _ := w.Decru[t(ctx, co[jerText], opt...)
    ```
-
-1. Use `"github.com/hashicorp/go-kms-wrapping/v2"` decrypt the original plaintext.
-   ```golang
-	envInfo := &wrapping.EnvelopeInfo{
-		Key:        innerEncryptionKey,
-		Iv:         innerIV,
-		Ciphertext: ciphertext,
-	}
-
-	plaintext, err := wrapping.EnvelopeDecrypt(envInfo, opt...)
-   ```
-
-You maybe wondering why this library rewraps an AES key (eg why not directly use the KEM `sharedSecret`?), well this is just inherited from the underlying library (`go-kms-wrapping`) in which you have to call `env, err := wrapping.EnvelopeEncrypt(plaintext, opt...)`  with the provided plaintext and that itself creates the inner AES key.  Sure, i could just write my own plain wrapper library and forget about `go-kms-wrapping`'s constructs but i'm trying to be consistent with it.
 
 ### Build
 

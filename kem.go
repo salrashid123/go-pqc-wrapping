@@ -1,21 +1,18 @@
 package pqcwrap
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/mlkem"
-	"crypto/rand"
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync/atomic"
 
 	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
+	wrapaead "github.com/hashicorp/go-kms-wrapping/v2/aead"
 	"github.com/salrashid123/go-pqc-wrapping/pqcwrappb"
 	context "golang.org/x/net/context"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -91,17 +88,10 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		return nil, errors.New("given plaintext for encryption is nil")
 	}
 
-	// first encrypt the cypertext using go-kms-wrappings base key
-	// this will return the 'env' variable below which includes the ciphertext, IV and raw innerKey
-	env, err := wrapping.EnvelopeEncrypt(plaintext, opt...)
-	if err != nil {
-		return nil, fmt.Errorf("error wrapping data: %w", err)
-	}
-
 	// acquire the ML-kem public key in PEM format
 	pubPEMblock, rest := pem.Decode([]byte(s.publicKey))
 	if len(rest) != 0 {
-		return nil, fmt.Errorf("error getting publicKey PEM: %w", err)
+		return nil, fmt.Errorf("error getting publicKey PEM")
 	}
 	var pkix pkixPubKey
 	if rest, err := asn1.Unmarshal(pubPEMblock.Bytes, &pkix); err != nil {
@@ -136,29 +126,19 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		return nil, fmt.Errorf("error unsupported algorithm %s", pkix.Algorithm.Algorithm.String())
 	}
 
-	// use the shared key to create a new outer encryption key
-	block, err := aes.NewCipher(kemSharedSecret)
+	w := wrapaead.NewWrapper()
+	_, err := w.SetConfig(ctx, opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error creating aes inner cipher %v", err)
+		return nil, fmt.Errorf("error setting config %v", err)
 	}
-
-	aesgcm, err := cipher.NewGCM(block)
+	err = w.SetAesGcmKeyBytes(kemSharedSecret)
 	if err != nil {
-		return nil, fmt.Errorf("error creating AES GCM %v", err)
+		return nil, fmt.Errorf("error setting AESGCM Key %v", err)
 	}
-	nonce := make([]byte, aesgcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("error creating aes nonce %v", err)
-	}
-
-	opts, err := getOpts(opt...)
+	c, err := w.Encrypt(ctx, plaintext, opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error reading options %v", err)
+		return nil, fmt.Errorf("error encrypting %v", err)
 	}
-
-	// encrypt the innerKey (env.Key) using the outerKey
-	wrappedCipherText = aesgcm.Seal(nil, nonce, env.Key, opts.GetWithAad())
-	wrappedCipherText = append(nonce, wrappedCipherText...)
 
 	wrappb := &pqcwrappb.Secret{
 		Name:          s.keyName,
@@ -178,8 +158,9 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	s.currentKeyId.Store(s.keyName)
 
 	ret := &wrapping.BlobInfo{
-		Ciphertext: env.Ciphertext,
-		Iv:         env.Iv,
+		Ciphertext: c.Ciphertext,
+		Iv:         c.Iv,
+		Hmac:       c.Hmac,
 		KeyInfo: &wrapping.KeyInfo{
 			KeyId:      s.keyName,
 			WrappedKey: b,
@@ -268,44 +249,19 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 
 	}
 
-	// use the shared key to create the outerKey
-	block, err := aes.NewCipher(sharedKey)
+	w := wrapaead.NewWrapper()
+	_, err = w.SetConfig(ctx, opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error initializing aes cipher: %w", err)
+		return nil, fmt.Errorf("error setting config %v", err)
 	}
-
-	aesgcm, err := cipher.NewGCM(block)
+	err = w.SetAesGcmKeyBytes(sharedKey)
 	if err != nil {
-		return nil, fmt.Errorf("error initialing gcm: %w", err)
+		return nil, fmt.Errorf("error setting AESGCM Key %v", err)
 	}
-
-	// extract the prepended nonce and raw ciphertext of the outerkey
-	nonce := wrappb.WrappedRawKey[:aesgcm.NonceSize()]
-	ciphertext := wrappb.WrappedRawKey[aesgcm.NonceSize():]
-
-	opts, err := getOpts(opt...)
+	d, err := w.Decrypt(ctx, in, opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error reading options %v", err)
+		return nil, fmt.Errorf("error decrypting %v", err)
 	}
 
-	// decrypt the innerKey
-	innerKey, err := aesgcm.Open(nil, nonce, ciphertext, opts.GetWithAad())
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting aes gcm  cipher: %w", err)
-	}
-
-	// the unsealed data is the inner encryption key
-	envInfo := &wrapping.EnvelopeInfo{
-		Key:        innerKey,
-		Iv:         in.Iv,
-		Ciphertext: in.Ciphertext,
-	}
-
-	// we're finally ready to decrypt the ciphertext
-	plaintext, err := wrapping.EnvelopeDecrypt(envInfo, opt...)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting data with envelope: %w", err)
-	}
-
-	return plaintext, nil
+	return d, nil
 }
