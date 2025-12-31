@@ -1,4 +1,4 @@
-## Go library and CLI for encrypting data using Post Quantum Cryptography (PQC)
+## AEAD encryption using Post Quantum Cryptography (ML-KEM)
 
 This is a simple go library and cli using `ML-KEM` to wrap encrypt/decrypt arbitrary data.  
 
@@ -36,6 +36,34 @@ Also see:
 
 ## Usage
 
+If you want to encrypt data intended for a remote system, the remote system must first generate an ML-KEM key pair and share the public key
+
+If Bob wants to encrypt data for Alice
+
+Alice generates `MK-KEM` keypair (`pub.pem`, `priv.pem`)
+
+Alice shares `pub.pem` with Bob
+
+  Encrypt (Bob):
+
+  1. generate aead `[key]`
+  2. `cipherText = AEAD_Encrypt( key, plaintext )`
+  3. get encapsulation data 
+
+     `kemSharedSecret, kemCipherText = ML_KEM_Encapsulate( pub.pem )` 
+
+  4. `wrapped_key = AEAD_Encrypt( kemSharedSecret, key )`
+  5.  Bob sends `[ kemCipherText, wrapped_key, cipherText ]` to Alice
+
+  Decrypt (Alice):
+
+  1. `kemSharedSecret = ML_KEM_Decapsulate( priv.pem, kemCipherText )`
+  2. `key = AEAD_Decrypt( kemSharedSecret, wrapped_key )`
+  3. `plaintext = AEAD_Decrypt( key, cipherText )`
+
+Note the reason why the `plaintext` is not encrypted directly by `kemSharedSecret` is because the underlying library [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) automatically generates `key` for you.  In the end, we have two layers of encryption here.
+
+
 ### Key Generation
 
 This repo only support PEM encoded files which encodes the `bare-seed`.  See the [#openssl-key-formats](#openssl-key-formats) section below.
@@ -56,8 +84,6 @@ go run main.go --keyType=mlkem768 \
 or with openssl
 
 ```bash
-docker run -v /dev/urandom:/dev/urandom -ti salrashid123/openssl-pqs:3.5.0-dev
-
 $ openssl -version
     OpenSSL 3.5.0-dev  (Library: OpenSSL 3.5.0-dev )
 
@@ -69,13 +95,33 @@ $ openssl genpkey  -algorithm mlkem768 \
 openssl pkey  -in priv-ml-kem-768-bare-seed.pem  -pubout -out pub-ml-kem-768-bare-seed.pem
 ```
 
-for go, 
+If your openssl version does not support mlkem, you can use a dockerfile
+
+```bash
+docker run -v /dev/urandom:/dev/urandom -ti salrashid123/openssl-pqs:3.5.0-dev
+```
 
 ### CLI
 
 Prebuilt, signed binaries can be found under the [Releases](https://github.com/salrashid123/go-pqc-wrapping/releases) page,  To run directly, you will need `go1.24.0+`
 
+CLI Options:
+
+| Option | Description |
+|:------------|-------------|
+| **`-mode`** | operation mode `encrypt or decrypt` (default: `encrypt`) |
+| **`-dataToEncrypt`** | some small text to encrypt (default ``) |
+| **`-key`** | Public key to encrypt or private key to decrypt  (default ``) |
+| **`-aad`** | AAD aadditional data to encrypt/decrytp (default ``) |
+| **`-in`** | file to read encrypted data from (default: ``) |
+| **`-out`** | File to write encrypted data to (default: ``) |
+| **`-keyName`** | any arbitrary name to give to the key (default: ``) |
+| **`-debug`** | toggle debug mode (default: `false`) |
+
+---
+
 ```bash
+## to build manually
 go build  -o go-pqc-wrapping cmd/main.go
 
 ## Encrypt
