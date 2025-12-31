@@ -258,7 +258,7 @@ go run decrypt_kms/main.go \
 
 There are two levels of encryption involved with this library and is best described in this flow:
 
-**Encrypt(plaintext, kemPublicKey)**
+-  Encrypt
 
 1. Read the `ML-KEM` Public key and generate `sharedCiphertext` and `sharedSecret`
 
@@ -304,7 +304,7 @@ The keyfile is:
 }
 ```
 
-**Decrypt(ciphertext,kemCipherText,wrappedRawKey,kemPrivateKey)**
+- Decrypt
 
 1. Initialize ML-KEM using private key and recover the `kemSharedSecret`
    ```golang
