@@ -1,8 +1,11 @@
 package pqcwrap
 
 import (
+	"bytes"
 	"crypto/mlkem"
+	"crypto/sha256"
 	"encoding/asn1"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -16,6 +19,7 @@ import (
 	"github.com/salrashid123/go-pqc-wrapping/pqcwrappb"
 	context "golang.org/x/net/context"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
@@ -32,7 +36,7 @@ type PQCWrapper struct {
 	privateKey   string
 	debug        bool
 	kmsKey       bool
-	userAgent    string
+	clientData   *structpb.Struct
 }
 
 var (
@@ -56,20 +60,22 @@ func (s *PQCWrapper) SetConfig(_ context.Context, opt ...wrapping.Option) (*wrap
 		return nil, err
 	}
 
-	s.userAgent = opts.withUserAgent
 	s.publicKey = opts.withPublicKey
 	s.privateKey = opts.withPrivateKey
 	s.keyName = opts.withKeyName
 	s.kmsKey = opts.withKMSKey
+	s.clientData = opts.withClientData
 	s.debug = opts.withDebug
+
+	if opts.WithAad != nil {
+		return nil, fmt.Errorf("AAD must be specified only on Encrypt or Decrypt")
+	}
 
 	// Map that holds non-sensitive configuration info to return
 	wrapConfig := new(wrapping.WrapperConfig)
 	wrapConfig.Metadata = make(map[string]string)
 	wrapConfig.Metadata[KeyName] = s.keyName
 	wrapConfig.Metadata[PublicKey] = s.publicKey
-
-	//wrapConfig.Metadata[PrivateKey] = s.privateKey
 
 	return wrapConfig, nil
 }
@@ -88,6 +94,9 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		return nil, errors.New("given plaintext for encryption is nil")
 	}
 
+	if s.publicKey == "" {
+		return nil, fmt.Errorf("error public key cannot be null for encrypting")
+	}
 	// acquire the ML-kem public key in PEM format
 	pubPEMblock, rest := pem.Decode([]byte(s.publicKey))
 	if len(rest) != 0 {
@@ -108,7 +117,7 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	// then acquire the kem ciphertext and the sharedkey
 	var keyType pqcwrappb.Secret_KeyType
 	switch pkix.Algorithm.Algorithm.String() {
-	case mlkem780_OID.String():
+	case mlkem768_OID.String():
 		ek, err := mlkem.NewEncapsulationKey768(pkix.PublicKey.Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("error creating encapsulation key %v", err)
@@ -126,11 +135,20 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		return nil, fmt.Errorf("error unsupported algorithm %s", pkix.Algorithm.Algorithm.String())
 	}
 
-	w := wrapaead.NewWrapper()
-	_, err := w.SetConfig(ctx, opt...)
+	opts, err := getOpts(opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error setting config %v", err)
+		return nil, err
 	}
+	cd := s.clientData
+	if opts.withClientData != nil {
+		cd = opts.withClientData
+	}
+
+	// now encrypt the plaintext using the aes-gcm key which we sealed earlier into the tpm object
+	// the library we're using to do that is "github.com/hashicorp/go-kms-wrapping/v2/aead"
+	//  note the ciphertext already has the iv included in it
+	//  https://github.com/hashicorp/go-kms-wrapping/blob/main/aead/aead.go#L242-L249
+	w := wrapaead.NewWrapper()
 	err = w.SetAesGcmKeyBytes(kemSharedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("error setting AESGCM Key %v", err)
@@ -146,6 +164,7 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		Type:          keyType,
 		KemCipherText: kemCipherText,
 		WrappedRawKey: wrappedCipherText,
+		// PublicKey:     []byte(s.publicKey),  // todo, add flag to optionally include the public key
 	}
 
 	// get the bytes of the proto
@@ -159,12 +178,14 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 
 	ret := &wrapping.BlobInfo{
 		Ciphertext: c.Ciphertext,
-		Iv:         c.Iv,
-		Hmac:       c.Hmac,
+		//Iv:         c.Iv,
+		Hmac: c.Hmac,
 		KeyInfo: &wrapping.KeyInfo{
+			Mechanism:  uint64(keyType),
 			KeyId:      s.keyName,
 			WrappedKey: b,
 		},
+		ClientData: cd,
 	}
 
 	return ret, nil
@@ -180,6 +201,42 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 	err := protojson.Unmarshal(in.KeyInfo.WrappedKey, wrappb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unwrap proto Key: %v", err)
+	}
+
+	if wrappb.Version != KeyVersion {
+		return nil, fmt.Errorf("key is encoded by key version [%d] which is incompatile with the current version [%d]\n\nsee: https://github.com/salrashid123/go-pqc-wrapping/tree/main?tab=readme-ov-file#versions", wrappb.Version, KeyVersion)
+	}
+
+	cd := s.clientData
+	opts, err := getOpts(opt...)
+	if err != nil {
+		return nil, err
+	}
+	if opts.withClientData != nil {
+		cd = opts.withClientData
+	}
+
+	if cd != nil {
+
+		ejsonBytes, err := json.Marshal(in.ClientData.AsMap())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read clientData from blobinfo: %v", err)
+		}
+		ehasher := sha256.New()
+		ehasher.Write(ejsonBytes)
+		ehashBytes := ehasher.Sum(nil)
+
+		providedJsonBytes, err := json.Marshal(cd.AsMap())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read clientData from parameter: %v", err)
+		}
+		phasher := sha256.New()
+		phasher.Write(providedJsonBytes)
+		phashBytes := phasher.Sum(nil)
+
+		if !bytes.Equal(ehashBytes, phashBytes) {
+			return nil, fmt.Errorf("Provided client_data does not match.  \nfrom blobinfo \n[%s]\nfrom prarameter \n[%s]", in.ClientData.String(), cd.String())
+		}
 	}
 
 	var sharedKey []byte
@@ -223,7 +280,7 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		// now create a decapsulationKey based on the declared type
 		//  then acquire the raw (decrypted) sharedKey
 		switch prkix.Algorithm.Algorithm.String() {
-		case mlkem780_OID.String():
+		case mlkem768_OID.String():
 			dk, err := mlkem.NewDecapsulationKey768(prkix.PrivateKey)
 			if err != nil {
 				return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
@@ -250,10 +307,6 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 	}
 
 	w := wrapaead.NewWrapper()
-	_, err = w.SetConfig(ctx, opt...)
-	if err != nil {
-		return nil, fmt.Errorf("error setting config %v", err)
-	}
 	err = w.SetAesGcmKeyBytes(sharedKey)
 	if err != nil {
 		return nil, fmt.Errorf("error setting AESGCM Key %v", err)

@@ -22,7 +22,7 @@ const ()
 
 var (
 	mlkem512_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 1}
-	mlkem780_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 2}
+	mlkem768_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 2}
 	mlkem1024_OID = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 3}
 )
 
@@ -65,7 +65,7 @@ func main() {
 	var kemSharedSecret []byte
 	var kemCipherText []byte
 	switch pkix.Algorithm.Algorithm.String() {
-	case mlkem780_OID.String():
+	case mlkem768_OID.String():
 		ek, err := mlkem.NewEncapsulationKey768(pkix.PublicKey.Bytes)
 		if err != nil {
 			fmt.Printf("error creating encapsulation key %v", err)
@@ -113,7 +113,7 @@ func main() {
 	fmt.Println()
 
 	switch pkix.Algorithm.Algorithm.String() {
-	case mlkem780_OID.String():
+	case mlkem768_OID.String():
 		dk, err := mlkem.NewDecapsulationKey768(ppkix.PrivateKey)
 		if err != nil {
 			fmt.Printf("error creating encapsulation key %v", err)

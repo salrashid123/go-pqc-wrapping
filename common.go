@@ -7,7 +7,7 @@ import (
 
 var (
 	mlkem512_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 1}
-	mlkem780_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 2}
+	mlkem768_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 2}
 	mlkem1024_OID = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 3}
 )
 
@@ -24,11 +24,11 @@ type pkixPubKey struct {
 }
 
 const (
-	KeyName    = "key_name"
+	KeyName    = "key_id"
 	PublicKey  = "public_key"
 	PrivateKey = "private_key"
 
-	KeyVersion = 1
+	KeyVersion = 2
 
 	DEBUG = "debug"
 )

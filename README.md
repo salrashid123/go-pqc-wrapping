@@ -27,6 +27,8 @@ Also see:
     - [Encrypt](#encrypt)
     - [Decrypt](#decrypt)
 * [Wrapped Key format](#wrapped-key-format)
+  - [Client Data](#client-data)
+  - [Versions](#versions)
 * [GCP KMS](#gcp-kms)
 * [Build](#build)
 * [Openssl key formats](#openssl-key-formats)
@@ -59,6 +61,7 @@ Encrypt (Bob):
 Decrypt (Alice):
 
 4. `kemSharedSecret = ML_KEM_Decapsulate( priv.pem, kemCipherText )`
+
 5. `plaintext = AEAD_Decrypt( kemSharedSecret, cipherText )`
 
 
@@ -111,6 +114,7 @@ CLI Options:
 | **`-dataToEncrypt`** | some small text to encrypt (default ``) |
 | **`-key`** | Public key to encrypt or private key to decrypt  (default ``) |
 | **`-aad`** | AAD aadditional data to encrypt/decrytp (default ``) |
+| **`-clientData`** | JSON to include as client_data (default ``) |
 | **`-in`** | file to read encrypted data from (default: ``) |
 | **`-out`** | File to write encrypted data to (default: ``) |
 | **`-keyName`** | any arbitrary name to give to the key (default: ``) |
@@ -125,12 +129,12 @@ go build  -o go-pqc-wrapping cmd/main.go
 ## Encrypt
 ./go-pqc-wrapping --mode=encrypt --aad=myaad \
  --key=file://`pwd`/example/certs/pub-ml-kem-768-bare-seed.pem \
- --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json
+ --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json --debug
 
 ## decrypt
 ./go-pqc-wrapping  --mode=decrypt --aad=myaad \
  --key=file://`pwd`/example/certs/bare-seed-768.pem \
- --in=/tmp/encrypted.json --out=/tmp/decrypted.txt
+ --in=/tmp/encrypted.json --out=/tmp/decrypted.txt --debug
 ```
 
 ### Library
@@ -177,10 +181,76 @@ as library:
 ```bash
 cd example
 ## Encrypt
-go run encrypt/main.go --publicKey=certs/pub-ml-kem-768.pem
+go run encrypt/main.go --publicKey=certs/pub-ml-kem-768-bare-seed.pem
 
 # Decrypt
 go run decrypt/main.go --privateKey="certs/bare-seed-768.pem"
+```
+
+#### Client Data
+
+You can also embed additional arbitrary JSON data into the protobuf as `client_data` structure.  This data is **not** included in the encryption and is not directly related to the `AdditionalData (AAD)` associated with aes-gcm.
+
+The client data field is instead just unencrypted/unverified data you can associate with the encoded key.  
+
+However, you can canonicalize the `client_data` as JSON, hash that and use that hash value as the AAD.  In effect, the client_data can then be used as part of the integrity calculation.
+
+For example, if the client data is
+
+```json
+	"clientData": {
+		"location": {
+			"region": "us",
+			"zone": "central"
+		},
+		"provider": "pqc"
+	}
+```
+
+then you can encrypt/decrypt as:
+
+```bash
+./go-pqc-wrapping --mode=encrypt --aad=myaad \
+ --clientData="{\"provider\": \"pqc\", \"location\": { \"region\": \"us\", \"zone\": \"central\"}}" \
+ --key=file://`pwd`/example/certs/pub-ml-kem-768-bare-seed.pem \
+ --dataToEncrypt="bar" --keyName=mykey --out=/tmp/encrypted.json --debug
+
+## decrypt
+./go-pqc-wrapping  --mode=decrypt --aad=myaad \
+ --clientData="{\"provider\": \"pqc\", \"location\": { \"region\": \"us\", \"zone\": \"central\"}}" \
+ --key=file://`pwd`/example/certs/bare-seed-768.pem \
+ --in=/tmp/encrypted.json --out=/tmp/decrypted.txt --debug
+```
+
+as library, see `example/client_data`.   The examples below encodes the hash of the client_data as the AAD itself
+
+```bash
+cd example/
+go run client_data/encrypt/main.go -publicKey=certs/pub-ml-kem-768-bare-seed.pem \
+  -clientData="{\"provider\": \"pqc\", \"location\": { \"region\": \"us\", \"zone\": \"central\"}}" \
+  -dataToEncrypt=foo \
+  -encryptedBlob=/tmp/encrypted.json
+
+# decrypt
+go run client_data/decrypt/main.go \
+  --privateKey=certs/bare-seed-768.pem \
+  -encryptedBlob=/tmp/encrypted.json \
+  --clientData="{\"provider\": \"pqc\", \"location\": { \"zone\": \"central\",\"region\": \"us\"}}"
+```
+
+Note that you can specify the client data either in the overall wrapper config or during each encrypt/decrypt method.  If specified in the encrypt/decrypt methods, it takes priority.
+
+specified in config:
+
+```golang
+	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(pubPEMBytes)),
+		pqcwrap.WithClientData(*clientData))
+```
+
+in operation:
+
+```golang
+plaintext, err := wrapper.Decrypt(ctx, newBlobInfo, pqcwrap.WithClientData(*expectedClientData))
 ```
 
 ### GCP KMS
@@ -267,7 +337,7 @@ There are two levels of encryption involved with this library and is best descri
    kemSharedSecret, kemCipherText = ek.Encapsulate()
    ```
 
-2. Create new *direct* aead wrapper using `wrapaead "github.com/hashicorp/go-kms-wrapping/v2/aead"` and set  `kemSharedSecret` as the key.
+2. Create new *direct* aead wrapper using `wrapaead "github.com/hashicorp/go-kms-wrapping/v2/aead"` and set  `kemSharedSecret` as the key. `wrapaead` already includes the [iv into the ciphertext](https://github.com/hashicorp/go-kms-wrapping/blob/main/aead/aead.go#L242-L249) 
 
    ```golang
 	w := wrapaead.NewWrapper()
@@ -276,7 +346,7 @@ There are two levels of encryption involved with this library and is best descri
    ```
 
 
-* `ciphertext`: the encrypted data wrapped using `kemSharedSecret` 
+* `ciphertext`: the encrypted data wrapped using `kemSharedSecret`  amd already includes the initialization vector
 * `wrappedKey`: the ML-KEM `sharedCiphertext`
 
 ```json
@@ -317,8 +387,20 @@ The keyfile is:
    ```golang
 	w := wrapaead.NewWrapper()
 	err := w.SetAesGcmKeyBytes(kemSharedSecret)
-	cipherText, _ := w.Decru[t(ctx, co[jerText], opt...)
+	plainText, _ := w.Decrypt(ctx, cipherText, opt...)
    ```
+
+#### Versions
+
+The following lists the [Version](https://github.com/salrashid123/go-pqc-wrapping/blob/main/common.go#L31) values used in the encoding of the key.
+
+Its important to decrypt using a cli or library version which is consistent with the proto or key encoding formats.
+
+
+| KeyVersion | Date |
+|------------|-------------|
+| 1 | `2/25/25` |
+| 2 | `1/2/26` |
 
 ### Build
 
@@ -413,7 +495,9 @@ openssl pkey -in priv-ml-kem-768-seed-priv.pem -text
       c6:6d:ef:2b
 
 ### now convert
-openssl pkey -in priv-ml-kem-768-seed-priv.pem  -provparam ml-kem.output_formats=bare-seed -out priv-ml-kem-768-bare-seed.pem
+openssl pkey -in priv-ml-kem-768-seed-priv.pem \
+   -provparam ml-kem.output_formats=bare-seed \
+   -out priv-ml-kem-768-bare-seed.pem
 
 ### and veify the seed is the same
 openssl pkey -in priv-ml-kem-768-bare-seed.pem -text

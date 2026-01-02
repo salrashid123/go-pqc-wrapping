@@ -20,7 +20,7 @@ var (
 
 var (
 	mlkem512_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 1}
-	mlkem780_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 2}
+	mlkem768_OID  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 2}
 	mlkem1024_OID = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 4, 3}
 )
 
@@ -53,7 +53,7 @@ func main() {
 		privateKey := pkixPrivKey{
 			Version: 0,
 			Algorithm: pkix.AlgorithmIdentifier{
-				Algorithm: mlkem780_OID,
+				Algorithm: mlkem768_OID,
 			},
 			PrivateKey: nk.Bytes(),
 		}
@@ -73,7 +73,7 @@ func main() {
 		nk.EncapsulationKey().Bytes()
 		publicKey := pkixPubKey{
 			Algorithm: pkix.AlgorithmIdentifier{
-				Algorithm: mlkem780_OID,
+				Algorithm: mlkem768_OID,
 			},
 			PublicKey: asn1.BitString{
 				BitLength: len(nk.EncapsulationKey().Bytes()),
@@ -91,6 +91,8 @@ func main() {
 		}
 		publicKeyBytes = pem.EncodeToMemory(publicKeyBlock)
 
+		//fmt.Printf("raw private key %s\n", hex.EncodeToString(nk.Bytes()))
+		//fmt.Printf("raw public key %s\n", hex.EncodeToString(nk.EncapsulationKey().Bytes()))
 	case "mlkem1024":
 		// generate key
 		nk, err := mlkem.GenerateKey1024()

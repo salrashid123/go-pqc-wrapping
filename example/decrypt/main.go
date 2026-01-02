@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
@@ -25,36 +26,31 @@ func main() {
 
 	privatePEMBytes, err := os.ReadFile(*privateKey)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading public key %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	wrapper := pqcwrap.NewWrapper()
 
 	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(string(privatePEMBytes)))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
 	b, err := os.ReadFile(*encryptedBlob)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading encrypted file %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
 	newBlobInfo := &wrapping.BlobInfo{}
 	err = protojson.Unmarshal(b, newBlobInfo)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error unmarshalling %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
 	aad := []byte("myaad")
 
 	plaintext, err := wrapper.Decrypt(ctx, newBlobInfo, wrapping.WithAad(aad))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error decrypting %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	fmt.Printf("Decrypted %s\n", string(plaintext))
 

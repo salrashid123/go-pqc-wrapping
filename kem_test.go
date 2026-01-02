@@ -158,3 +158,241 @@ func TestEncryptDecryptKMS768(t *testing.T) {
 
 	require.Equal(t, dataToSeal, plaintext)
 }
+
+func TestAAD(t *testing.T) {
+
+	ctx := context.Background()
+
+	pubBytes, err := os.ReadFile(bareSeedPublicPEM768)
+	require.NoError(t, err)
+
+	privBytes, err := os.ReadFile(bareSeedPrivatePEM768)
+	require.NoError(t, err)
+
+	keyName := "bar"
+
+	tests := []struct {
+		name          string
+		aadEncrypt    []byte
+		aadDecrypt    []byte
+		shouldSucceed bool
+	}{
+		{"aadSucceed", []byte("myaad"), []byte("myaad"), true},
+		{"aadFail", []byte("myaad"), []byte("bar"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+
+			wrapper := NewWrapper()
+			_, err = wrapper.SetConfig(ctx, WithPublicKey(string(pubBytes)), WithKeyName(keyName))
+			require.NoError(t, err)
+
+			dataToSeal := []byte("foo")
+
+			blobInfo, err := wrapper.Encrypt(ctx, dataToSeal, wrapping.WithAad(tc.aadEncrypt))
+			require.NoError(t, err)
+
+			b, err := protojson.Marshal(blobInfo)
+			require.NoError(t, err)
+
+			var prettyJSON bytes.Buffer
+			err = json.Indent(&prettyJSON, b, "", "\t")
+			require.NoError(t, err)
+
+			newBlobInfo := &wrapping.BlobInfo{}
+			err = protojson.Unmarshal(b, newBlobInfo)
+			require.NoError(t, err)
+
+			wrapperD := NewWrapper()
+			_, err = wrapperD.SetConfig(ctx, WithPrivateKey(string(privBytes)))
+			require.NoError(t, err)
+
+			_, err = wrapperD.Decrypt(ctx, newBlobInfo, wrapping.WithAad(tc.aadDecrypt))
+			if tc.shouldSucceed {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+
+		})
+	}
+
+}
+
+func TestClientDataGlobal(t *testing.T) {
+
+	ctx := context.Background()
+
+	pubBytes, err := os.ReadFile(bareSeedPublicPEM768)
+	require.NoError(t, err)
+
+	privBytes, err := os.ReadFile(bareSeedPrivatePEM768)
+	require.NoError(t, err)
+
+	keyName := "bar"
+
+	tests := []struct {
+		name              string
+		clientDataEncrypt string
+		clientDataDecrypt string
+
+		shouldSucceed bool
+	}{
+		{"ClientDataGlobalSucceed", "{\"provider\": \"provider1\"}", "{\"provider\": \"provider1\"}", true},
+		{"ClientDataGlobalFail", "{\"provider\": \"provider1\"}", "{\"provider\": \"provider2\"}", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+
+			wrapper := NewWrapper()
+			_, err = wrapper.SetConfig(ctx, WithPublicKey(string(pubBytes)), WithKeyName(keyName), WithClientData(tc.clientDataEncrypt))
+			require.NoError(t, err)
+
+			dataToSeal := []byte("foo")
+
+			blobInfo, err := wrapper.Encrypt(ctx, dataToSeal)
+			require.NoError(t, err)
+
+			b, err := protojson.Marshal(blobInfo)
+			require.NoError(t, err)
+
+			var prettyJSON bytes.Buffer
+			err = json.Indent(&prettyJSON, b, "", "\t")
+			require.NoError(t, err)
+
+			newBlobInfo := &wrapping.BlobInfo{}
+			err = protojson.Unmarshal(b, newBlobInfo)
+			require.NoError(t, err)
+
+			wrapperD := NewWrapper()
+			_, err = wrapperD.SetConfig(ctx, WithPrivateKey(string(privBytes)), WithClientData(tc.clientDataDecrypt))
+			require.NoError(t, err)
+
+			_, err = wrapperD.Decrypt(ctx, newBlobInfo)
+			if tc.shouldSucceed {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+
+}
+
+func TestClientDataLocal(t *testing.T) {
+
+	ctx := context.Background()
+
+	pubBytes, err := os.ReadFile(bareSeedPublicPEM768)
+	require.NoError(t, err)
+
+	privBytes, err := os.ReadFile(bareSeedPrivatePEM768)
+	require.NoError(t, err)
+
+	keyName := "bar"
+
+	tests := []struct {
+		name              string
+		clientDataEncrypt string
+		clientDataDecrypt string
+
+		shouldSucceed bool
+	}{
+		{"ClientDataGlobalSucceed", "{\"provider\": \"provider1\"}", "{\"provider\": \"provider1\"}", true},
+		{"ClientDataGlobalFail", "{\"provider\": \"provider1\"}", "{\"provider\": \"provider2\"}", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+
+			wrapper := NewWrapper()
+			_, err = wrapper.SetConfig(ctx, WithPublicKey(string(pubBytes)), WithKeyName(keyName))
+			require.NoError(t, err)
+
+			dataToSeal := []byte("foo")
+
+			blobInfo, err := wrapper.Encrypt(ctx, dataToSeal, WithClientData(tc.clientDataEncrypt))
+			require.NoError(t, err)
+
+			b, err := protojson.Marshal(blobInfo)
+			require.NoError(t, err)
+
+			var prettyJSON bytes.Buffer
+			err = json.Indent(&prettyJSON, b, "", "\t")
+			require.NoError(t, err)
+
+			newBlobInfo := &wrapping.BlobInfo{}
+			err = protojson.Unmarshal(b, newBlobInfo)
+			require.NoError(t, err)
+
+			wrapperD := NewWrapper()
+			_, err = wrapperD.SetConfig(ctx, WithPrivateKey(string(privBytes)))
+			require.NoError(t, err)
+
+			_, err = wrapperD.Decrypt(ctx, newBlobInfo, WithClientData(tc.clientDataDecrypt))
+			if tc.shouldSucceed {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestClientDataMix(t *testing.T) {
+
+	ctx := context.Background()
+
+	pubBytes, err := os.ReadFile(bareSeedPublicPEM768)
+	require.NoError(t, err)
+
+	privBytes, err := os.ReadFile(bareSeedPrivatePEM768)
+	require.NoError(t, err)
+
+	keyName := "bar"
+
+	tests := []struct {
+		name              string
+		clientDataEncrypt string
+		clientDataDecrypt string
+
+		shouldSucceed bool
+	}{
+		{"ClientDataGlobalSucceed", "{\"provider\": \"provider1\"}", "{\"provider\": \"provider1\"}", true},
+		{"ClientDataGlobalFail", "{\"provider\": \"provider1\"}", "{\"provider\": \"provider2\"}", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+
+			wrapper := NewWrapper()
+			_, err = wrapper.SetConfig(ctx, WithPublicKey(string(pubBytes)), WithKeyName(keyName), WithClientData(tc.clientDataEncrypt))
+			require.NoError(t, err)
+
+			dataToSeal := []byte("foo")
+
+			blobInfo, err := wrapper.Encrypt(ctx, dataToSeal)
+			require.NoError(t, err)
+
+			b, err := protojson.Marshal(blobInfo)
+			require.NoError(t, err)
+
+			var prettyJSON bytes.Buffer
+			err = json.Indent(&prettyJSON, b, "", "\t")
+			require.NoError(t, err)
+
+			newBlobInfo := &wrapping.BlobInfo{}
+			err = protojson.Unmarshal(b, newBlobInfo)
+			require.NoError(t, err)
+
+			wrapperD := NewWrapper()
+			_, err = wrapperD.SetConfig(ctx, WithPrivateKey(string(privBytes)))
+			require.NoError(t, err)
+
+			_, err = wrapperD.Decrypt(ctx, newBlobInfo, WithClientData(tc.clientDataDecrypt))
+			if tc.shouldSucceed {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

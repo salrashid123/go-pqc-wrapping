@@ -19,9 +19,9 @@ var (
 
 	dataToEncrypt = flag.String("dataToEncrypt", "", "data to encrypt")
 	aad           = flag.String("aad", "", "with additional data")
-
-	debug   = flag.Bool("debug", false, "verbose output")
-	version = flag.Bool("version", false, "print version")
+	clientData    = flag.String("clientData", "", "JSON to include as clientdata")
+	debug         = flag.Bool("debug", false, "verbose output")
+	version       = flag.Bool("version", false, "print version")
 
 	key = flag.String("key", "", "Public key to encrypt or private key to decrypt")
 	in  = flag.String("in", "", "File to read encrypted data from")
@@ -47,12 +47,14 @@ func main() {
 
 	if *mode != "encrypt" && *mode != "decrypt" {
 		fmt.Fprintf(os.Stderr, "Error mode must be either encrypt or decrypt\n")
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
 	u, err := url.Parse(*key)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing URL; must be one of file:// or gcpkms:// :", err)
+		fmt.Fprintf(os.Stderr, "error parsing URL; must be one of file:// or gcpkms:// : %v\n", err)
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
@@ -64,28 +66,30 @@ func main() {
 		keyBytes, err = os.ReadFile(u.Path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: reading key file %v  \n", err)
+			flag.PrintDefaults()
 			os.Exit(1)
 		}
 	case "gcpkms":
 		useKMS = true
+		// todo parse and validate the kms uri://
 	default:
-		fmt.Fprintf(os.Stderr, "error parsing URL; must be one of file:// or gcpkms:// :", err)
+		fmt.Fprintf(os.Stderr, "error parsing URL; must be one of file:// or gcpkms:// : %v\n", err)
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
 	if *mode == "encrypt" {
 
 		wrapper := pqcwrap.NewWrapper()
-		_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(keyBytes)))
+		_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(keyBytes)), pqcwrap.WithClientData(*clientData), pqcwrap.WithDebug(*debug))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
 			os.Exit(1)
 		}
-		wrapper.SetConfig(ctx, pqcwrap.WithDebug(*debug))
 
 		blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt), wrapping.WithAad([]byte(*aad)))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error decrypting %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error encrypting %v\n", err)
 			os.Exit(1)
 		}
 
@@ -118,9 +122,9 @@ func main() {
 
 		wrapper.SetConfig(ctx, pqcwrap.WithDebug(*debug))
 		if useKMS {
-			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(*key), pqcwrap.WithKMSKey(true))
+			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(*key), pqcwrap.WithKMSKey(true), pqcwrap.WithClientData(*clientData), pqcwrap.WithDebug(*debug))
 		} else {
-			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(string(keyBytes)))
+			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(string(keyBytes)), pqcwrap.WithClientData(*clientData), pqcwrap.WithDebug(*debug))
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating wrapper %v\n", err)
@@ -146,8 +150,7 @@ func main() {
 			os.Exit(1)
 		}
 		if *debug {
-			fmt.Println("Decrypted:")
-			fmt.Printf("%s\n", string(plaintext))
+			fmt.Printf("%s", string(plaintext))
 		}
 
 		err = os.WriteFile(*out, plaintext, 0644)

@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/hashicorp/go-kms-wrapping/v2 v2.0.19
+	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/salrashid123/go-pqc-wrapping v0.0.0
 	google.golang.org/protobuf v1.36.10
 )
