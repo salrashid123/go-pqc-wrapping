@@ -111,7 +111,6 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 
 	var kemCipherText []byte
 	var kemSharedSecret []byte
-	var wrappedCipherText []byte
 
 	// initialize an encapsulation key based on the type
 	// then acquire the kem ciphertext and the sharedkey
@@ -135,6 +134,8 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		return nil, fmt.Errorf("error unsupported algorithm %s", pkix.Algorithm.Algorithm.String())
 	}
 
+	// see if global clientData was set
+	//  if its also set in the Encrypt() options, use that as instead
 	opts, err := getOpts(opt...)
 	if err != nil {
 		return nil, err
@@ -153,6 +154,7 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	if err != nil {
 		return nil, fmt.Errorf("error setting AESGCM Key %v", err)
 	}
+	// the opt... can include any aad you set during encrypt
 	c, err := w.Encrypt(ctx, plaintext, opt...)
 	if err != nil {
 		return nil, fmt.Errorf("error encrypting %v", err)
@@ -163,12 +165,11 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		Version:       KeyVersion,
 		Type:          keyType,
 		KemCipherText: kemCipherText,
-		WrappedRawKey: wrappedCipherText,
 		// PublicKey:     []byte(s.publicKey),  // todo, add flag to optionally include the public key
 	}
 
 	// get the bytes of the proto
-	b, err := protojson.Marshal(wrappb)
+	wrappedSecretproto, err := protojson.Marshal(wrappb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to wrap proto Key: %v", err)
 	}
@@ -177,13 +178,13 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	s.currentKeyId.Store(s.keyName)
 
 	ret := &wrapping.BlobInfo{
-		Ciphertext: c.Ciphertext,
-		//Iv:         c.Iv,
-		Hmac: c.Hmac,
+		Ciphertext: c.Ciphertext, // add the aes wrapped ciphertext into the blobinfo
+		//Iv:         c.Iv,         // no need to send in any IV since its already part of the ciphertext
+		//Hmac: c.Hmac,
 		KeyInfo: &wrapping.KeyInfo{
 			Mechanism:  uint64(keyType),
 			KeyId:      s.keyName,
-			WrappedKey: b,
+			WrappedKey: wrappedSecretproto,
 		},
 		ClientData: cd,
 	}
@@ -197,16 +198,20 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		return nil, fmt.Errorf("given ciphertext for decryption is nil")
 	}
 
+	// unmarshall the secret
 	wrappb := &pqcwrappb.Secret{}
 	err := protojson.Unmarshal(in.KeyInfo.WrappedKey, wrappb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unwrap proto Key: %v", err)
 	}
 
+	// check if the versions match
 	if wrappb.Version != KeyVersion {
 		return nil, fmt.Errorf("key is encoded by key version [%d] which is incompatile with the current version [%d]\n\nsee: https://github.com/salrashid123/go-pqc-wrapping/tree/main?tab=readme-ov-file#versions", wrappb.Version, KeyVersion)
 	}
 
+	// see if global clientData was set
+	//  if its also set in the Encrypt() options, use that as instead
 	cd := s.clientData
 	opts, err := getOpts(opt...)
 	if err != nil {
@@ -216,6 +221,9 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		cd = opts.withClientData
 	}
 
+	// if a value of clientData was provided in the decryption step or in config,
+	//  compare that to what was encoded into the BlobInfo
+	// if they are different, bail
 	if cd != nil {
 
 		ejsonBytes, err := json.Marshal(in.ClientData.AsMap())
@@ -234,11 +242,13 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		phasher.Write(providedJsonBytes)
 		phashBytes := phasher.Sum(nil)
 
+		// bail
 		if !bytes.Equal(ehashBytes, phashBytes) {
 			return nil, fmt.Errorf("Provided client_data does not match.  \nfrom blobinfo \n[%s]\nfrom prarameter \n[%s]", in.ClientData.String(), cd.String())
 		}
 	}
 
+	// decapsulate the sharedKey from the kemCipherText
 	var sharedKey []byte
 	if s.kmsKey {
 		kmsName := ""
@@ -306,6 +316,8 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 
 	}
 
+	// use the sharedKey to decrypt the data
+	//   the opt... you pass in includes any  AAD you set
 	w := wrapaead.NewWrapper()
 	err = w.SetAesGcmKeyBytes(sharedKey)
 	if err != nil {

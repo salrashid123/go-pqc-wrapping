@@ -16,6 +16,5 @@ message Secret {
   }
   bytes kemCipherText = 4;
   bytes publicKey = 5;
-  bytes wrappedRawKey = 6;  
 }
 
