@@ -113,6 +113,7 @@ func WithDebug(with bool) wrapping.Option {
 	}
 }
 
+// WithKMSKey boolean flag to signal if the KMS based key should be used to decrypt
 func WithKMSKey(with bool) wrapping.Option {
 	return func() interface{} {
 		return OptionFunc(func(o *options) error {
@@ -122,6 +123,7 @@ func WithKMSKey(with bool) wrapping.Option {
 	}
 }
 
+// WithClientData unencrypted json string to attach to the encoded key.  These values are not used in encryption or validation.  For that use wrapping.WithAad().
 func WithClientData(with string) wrapping.Option {
 	if with == "" {
 		return nil

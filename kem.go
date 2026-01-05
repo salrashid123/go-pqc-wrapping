@@ -68,7 +68,7 @@ func (s *PQCWrapper) SetConfig(_ context.Context, opt ...wrapping.Option) (*wrap
 	s.debug = opts.withDebug
 
 	if opts.WithAad != nil {
-		return nil, fmt.Errorf("AAD must be specified only on Encrypt or Decrypt")
+		return nil, fmt.Errorf("go-pqc-wrapping: AAD must be specified only on Encrypt or Decrypt")
 	}
 
 	// Map that holds non-sensitive configuration info to return
@@ -91,22 +91,22 @@ func (s *PQCWrapper) KeyId(_ context.Context) (string, error) {
 // Encrypts data using a the KEM sharedKey
 func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapping.Option) (*wrapping.BlobInfo, error) {
 	if plaintext == nil {
-		return nil, errors.New("given plaintext for encryption is nil")
+		return nil, errors.New("go-pqc-wrapping: plaintext for encryption cannot be nil")
 	}
 
 	if s.publicKey == "" {
-		return nil, fmt.Errorf("error public key cannot be null for encrypting")
+		return nil, fmt.Errorf("go-pqc-wrapping: error public key cannot be nil for encrypting")
 	}
 	// acquire the ML-kem public key in PEM format
 	pubPEMblock, rest := pem.Decode([]byte(s.publicKey))
 	if len(rest) != 0 {
-		return nil, fmt.Errorf("error getting publicKey PEM")
+		return nil, fmt.Errorf("go-pqc-wrapping: error decoding provided as PEM")
 	}
 	var pkix pkixPubKey
 	if rest, err := asn1.Unmarshal(pubPEMblock.Bytes, &pkix); err != nil {
-		return nil, fmt.Errorf("error unmarshaling public PEM to asn1: %w", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: error unmarshaling public PEM to asn1: %w", err)
 	} else if len(rest) != 0 {
-		return nil, fmt.Errorf("error unmarshaling publicKey PEM; rest not null")
+		return nil, fmt.Errorf("go-pqc-wrapping: error unmarshaling publicKey PEM; rest not null")
 	}
 
 	var kemCipherText []byte
@@ -119,30 +119,35 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	case mlkem768_OID.String():
 		ek, err := mlkem.NewEncapsulationKey768(pkix.PublicKey.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("error creating encapsulation key %v", err)
+			return nil, fmt.Errorf("go-pqc-wrapping: error creating encapsulation key %v", err)
 		}
 		keyType = pqcwrappb.Secret_ml_kem_768
 		kemSharedSecret, kemCipherText = ek.Encapsulate()
 	case mlkem1024_OID.String():
 		ek, err := mlkem.NewEncapsulationKey1024(pkix.PublicKey.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("error creating encapsulation key %v", err)
+			return nil, fmt.Errorf("go-pqc-wrapping: error creating encapsulation key %v", err)
 		}
 		keyType = pqcwrappb.Secret_ml_kem_1024
 		kemSharedSecret, kemCipherText = ek.Encapsulate()
 	default:
-		return nil, fmt.Errorf("error unsupported algorithm %s", pkix.Algorithm.Algorithm.String())
+		return nil, fmt.Errorf("go-pqc-wrapping: error unsupported algorithm %s", pkix.Algorithm.Algorithm.String())
 	}
 
 	// see if global clientData was set
 	//  if its also set in the Encrypt() options, use that as instead
 	opts, err := getOpts(opt...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("go-pqc-wrapping: error parsing options %v", err)
 	}
 	cd := s.clientData
 	if opts.withClientData != nil {
 		cd = opts.withClientData
+	}
+
+	if s.debug {
+		fmt.Printf("go-pqc-wrapping: using AAD: %s\n", opts.GetWithAad())
+		fmt.Printf("go-pqc-wrapping: using clientData: %s\n", cd.String())
 	}
 
 	// now encrypt the plaintext using the aes-gcm key which we sealed earlier into the tpm object
@@ -152,12 +157,12 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	w := wrapaead.NewWrapper()
 	err = w.SetAesGcmKeyBytes(kemSharedSecret)
 	if err != nil {
-		return nil, fmt.Errorf("error setting AESGCM Key %v", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: error setting AESGCM Key %v", err)
 	}
 	// the opt... can include any aad you set during encrypt
 	c, err := w.Encrypt(ctx, plaintext, opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error encrypting %v", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: error encrypting using AESKey %v", err)
 	}
 
 	wrappb := &pqcwrappb.Secret{
@@ -171,7 +176,7 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 	// get the bytes of the proto
 	wrappedSecretproto, err := protojson.Marshal(wrappb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap proto Key: %v", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: failed to wrap proto Key: %v", err)
 	}
 
 	// Store current key id value
@@ -195,19 +200,19 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 // Decrypt is used to decrypt the ciphertext.
 func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...wrapping.Option) ([]byte, error) {
 	if in.Ciphertext == nil {
-		return nil, fmt.Errorf("given ciphertext for decryption is nil")
+		return nil, fmt.Errorf("go-pqc-wrapping: given ciphertext for decryption is nil")
 	}
 
 	// unmarshall the secret
 	wrappb := &pqcwrappb.Secret{}
 	err := protojson.Unmarshal(in.KeyInfo.WrappedKey, wrappb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap proto Key: %v", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: failed to unwrap proto Key: %v", err)
 	}
 
 	// check if the versions match
 	if wrappb.Version != KeyVersion {
-		return nil, fmt.Errorf("key is encoded by key version [%d] which is incompatile with the current version [%d]\n\nsee: https://github.com/salrashid123/go-pqc-wrapping/tree/main?tab=readme-ov-file#versions", wrappb.Version, KeyVersion)
+		return nil, fmt.Errorf("go-pqc-wrapping: key is encoded by key version [%d] which is incompatile with the current version [%d]\n\nsee: https://github.com/salrashid123/go-pqc-wrapping/tree/main?tab=readme-ov-file#versions", wrappb.Version, KeyVersion)
 	}
 
 	// see if global clientData was set
@@ -215,7 +220,7 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 	cd := s.clientData
 	opts, err := getOpts(opt...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("go-pqc-wrapping: error parsing options %v", err)
 	}
 	if opts.withClientData != nil {
 		cd = opts.withClientData
@@ -226,26 +231,33 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 	// if they are different, bail
 	if cd != nil {
 
+		// get the hash of the value of the client_data provided in encoded file
 		ejsonBytes, err := json.Marshal(in.ClientData.AsMap())
 		if err != nil {
-			return nil, fmt.Errorf("failed to read clientData from blobinfo: %v", err)
+			return nil, fmt.Errorf("go-pqc-wrapping: failed to read clientData from blobinfo: %v", err)
 		}
 		ehasher := sha256.New()
 		ehasher.Write(ejsonBytes)
 		ehashBytes := ehasher.Sum(nil)
 
+		// get the has of the value provided in the setConfig() or Decrypt() step
 		providedJsonBytes, err := json.Marshal(cd.AsMap())
 		if err != nil {
-			return nil, fmt.Errorf("failed to read clientData from parameter: %v", err)
+			return nil, fmt.Errorf("fgo-pqc-wrapping: ailed to read clientData from parameter: %v", err)
 		}
 		phasher := sha256.New()
 		phasher.Write(providedJsonBytes)
 		phashBytes := phasher.Sum(nil)
 
-		// bail
+		// bail if they are different
 		if !bytes.Equal(ehashBytes, phashBytes) {
-			return nil, fmt.Errorf("Provided client_data does not match.  \nfrom blobinfo \n[%s]\nfrom prarameter \n[%s]", in.ClientData.String(), cd.String())
+			return nil, fmt.Errorf("go-pqc-wrapping: Provided client_data does not match.  \nfrom blobinfo \n[%s]\nfrom prarameter \n[%s]", in.ClientData.String(), cd.String())
 		}
+	}
+
+	if s.debug {
+		fmt.Printf("go-pqc-wrapping: using AAD: %s\n", opts.GetWithAad())
+		fmt.Printf("go-pqc-wrapping: using clientData: %s\n", cd.String())
 	}
 
 	// decapsulate the sharedKey from the kemCipherText
@@ -255,12 +267,12 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		if strings.HasPrefix(s.privateKey, "gcpkms://") {
 			kmsName = strings.TrimPrefix(s.privateKey, "gcpkms://")
 		} else {
-			return nil, fmt.Errorf("unsupported kms prefix %s", s.privateKey)
+			return nil, fmt.Errorf("go-pqc-wrapping: unsupported kms prefix %s", s.privateKey)
 		}
 		ctx := context.Background()
 		client, err := kms.NewKeyManagementClient(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("go-pqc-wrapping: error creating GCP KMS client %v", err)
 		}
 		defer client.Close()
 
@@ -269,7 +281,7 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 			Ciphertext: wrappb.KemCipherText,
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("go-pqc-wrapping: error decapsulating with KMS %v", err)
 		}
 		sharedKey = resp.SharedSecret
 
@@ -277,14 +289,14 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		// extract the private ML-KEM key
 		prPEMblock, rest := pem.Decode([]byte(s.privateKey))
 		if len(rest) != 0 {
-			return nil, fmt.Errorf("error getting private PEM: %w", err)
+			return nil, fmt.Errorf("go-pqc-wrapping: error getting private PEM: %w", err)
 		}
 
 		var prkix pkixPrivKey
 		if rest, err := asn1.Unmarshal(prPEMblock.Bytes, &prkix); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal private key")
+			return nil, fmt.Errorf("go-pqc-wrapping: failed to unmarshal private key")
 		} else if len(rest) != 0 {
-			return nil, fmt.Errorf("failed to decode private key PEM rest")
+			return nil, fmt.Errorf("go-pqc-wrapping: failed to decode private key PEM rest")
 		}
 
 		// now create a decapsulationKey based on the declared type
@@ -293,25 +305,25 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 		case mlkem768_OID.String():
 			dk, err := mlkem.NewDecapsulationKey768(prkix.PrivateKey)
 			if err != nil {
-				return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
+				return nil, fmt.Errorf("go-pqc-wrapping: error reading mlkem private PEM: %w", err)
 			}
 
 			sharedKey, err = dk.Decapsulate(wrappb.KemCipherText)
 			if err != nil {
-				return nil, fmt.Errorf("error decapsulating: %w", err)
+				return nil, fmt.Errorf("go-pqc-wrapping: error decapsulating: %w", err)
 			}
 		case mlkem1024_OID.String():
 			dk, err := mlkem.NewDecapsulationKey1024(prkix.PrivateKey)
 			if err != nil {
-				return nil, fmt.Errorf("error reading mlkem private PEM: %w", err)
+				return nil, fmt.Errorf("go-pqc-wrapping: error reading mlkem private PEM: %w", err)
 			}
 
 			sharedKey, err = dk.Decapsulate(wrappb.KemCipherText)
 			if err != nil {
-				return nil, fmt.Errorf("error decapsulating: %w", err)
+				return nil, fmt.Errorf("go-pqc-wrapping: error decapsulating: %w", err)
 			}
 		default:
-			return nil, fmt.Errorf("error unsupported algorithm %s", prkix.Algorithm.Algorithm.String())
+			return nil, fmt.Errorf("go-pqc-wrapping: error unsupported algorithm %s", prkix.Algorithm.Algorithm.String())
 		}
 
 	}
@@ -321,11 +333,11 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 	w := wrapaead.NewWrapper()
 	err = w.SetAesGcmKeyBytes(sharedKey)
 	if err != nil {
-		return nil, fmt.Errorf("error setting AESGCM Key %v", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: error setting AESGCM Key %v", err)
 	}
 	d, err := w.Decrypt(ctx, in, opt...)
 	if err != nil {
-		return nil, fmt.Errorf("error decrypting %v", err)
+		return nil, fmt.Errorf("go-pqc-wrapping: error decrypting %v", err)
 	}
 
 	return d, nil

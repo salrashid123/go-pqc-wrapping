@@ -64,6 +64,9 @@ Decrypt (Alice):
 
 5. `plaintext = AEAD_Decrypt( kemSharedSecret, cipherText )`
 
+This ofcourse extends how ml-kem is used by employing the `kemSharedSecret` as a wrapping AES256-GCM encryptionKey.  For reference the basic flow is described here in [FIPS 203 (page 12)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
+
+![images/key_exchange.png](images/key_exchange.png)
 
 ### Key Generation
 
@@ -147,7 +150,7 @@ To encrypt, you need to provide the PEM format of the ML-KEM public key:
 	pubPEMBytes, err := os.ReadFile(*publicKey)
 
 	wrapper := pqcwrap.NewWrapper()
-	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(pubPEMBytes)), pqcwrap.WithKeyName("myname"))
+	_, err = wrapper.SetConfig(ctx, pqcwrap.WithPublicKey(string(pubPEMBytes)))
 
 	blobInfo, err := wrapper.Encrypt(ctx, []byte(*dataToEncrypt), wrapping.WithAad([]byte("myaad")))
 
@@ -363,7 +366,7 @@ If you base64decode the `wrappedKey`
 
 * `kemCipherText` the `ML-KEM` ciphertext (eg `sharedCiphertext`). Once this is decapsulated, this becomes an AES GCM
 
-The keyfile is:
+The decoded keyfile is:
 
 ```json
 {
@@ -372,6 +375,13 @@ The keyfile is:
   "type": "ml_kem_768",
   "kemCipherText": "2N2FWUxkVuKCcmQSZ7T44jikfB+ofgNfoTM/0DnuBhDHo4mNFrXolLRwkhcjDmv6M4YkyobgpIKMdn95GRi6Xm/DMye0C4GrDQ0x+QqOoFwKaOd+NpOfP4mDEdV+a3tyLDI6v5qHda0VdIcZ2Nh06C8i1B9E4cWqMLFXxUnPNE3cQ0KdReP6EVrBm+64PG7MHfKV13vD7QFHXkLGjTGBhvOH1lOYjva+KdgBIid0Uw2YCV6nXUP0u2d/qpvjUDT0mp7qpVweDLEYLNZ3qlIEA5OYx2vs+bjpkcKb4zXcxuXDqhfg6oEQ21KEkGa8KHYGCTPypnOS6mrPGtfNzREL9ehm8r5I4q9SlPQe23c0fjwwPMK5T8bveAUOTcdCfgDVqzmiO3IfSW296jOyuLS1NZ+FVONc6ixxpP3KOxJS5kMaywOAbwCHxxc6ty7caSRpiicNIjO+Kx82ou/GIHOZHMjggin4/2tqNCJU30jJv06W2xEPNkFFVV5DJJrt2DVq8ImSCjiwCGbLbCW8CyLE67OMKe5ngAMm7ZL+hawCaG0Z4FbIaIfWGrtYP0tV+qomm3CKObqPH9Fwlx6atgs/7HK/5CB7YYxsyf0giH4xLBDMq10ju5d1lRlPG4HOjsC+ERGYcKiq6xEfHnp2Fu26z8ItszBLCWmX3gvWfvONve6/VEMKgtk0bhKrLnmt/NB3QLjqlfGQvHDkhDSm6WOnliTjoS6KYZXHdOvkY994olWWbhl0iSMfmKoumI5BMjac2syo2edK8tkJelyaQ2m+A3MHWjybF45QLnPw6LJ22nPEsjrQgtqGG75/v+IHO0SHu0HCihqM6bvSEP7EkWqYIlxFeUxPwLc2430YDGHndz8/Zr1qgccTrrohLB7vDb8io5r9nCP06WhIggG8JrEhhKkML/vYnV4nktkGb/+/f1YN4bFIO0Ek9MHxZfbrXeytSedBvhXDLELas3x4l5Uv21Vr48zip0FoXWdAIUX/dW9muWHaMhgvGxojBKfU7HvoqY5CBeFxpXbulmb/lBP0NYBJD9QWcuNLTGAZ8yyqc32EXmj8+z3igB1V55A5afSADIooMojwNgRc2A+lOakrnk0fz4DRizKSlaRIrUUEGlPVPm4UrkZFLFPg9YcpuZYiLAc2DHvIC0hbsiQaCPWNurmW37f8pC3Z79/NESGRJyYGw2b0iSsH7EM+W1kjiU/dp9QdZvLGV8XhHLhvRmy0h7gRfInzcEZqfyJ6IoscQce8odknb21iss/SgyJyGBuRtleypKuQTKxUIUefUY+QVz0Cpg5B9Ywn3a+uAa+k69PVWPf1HImruUtU0m1KbN+oCWQ0r0w/Kze2UDDDbZsHn8iJKAVWbwoPGEyqPSA3Lihek6rFzKq87y7jViOXSHb958XkR/6qjQaTnYQfUsrs7TO47wcjT00xq9n4cTY2fYA="
 }
+```
+
+If you want to use cli to decode everything run
+
+```bash
+$ cat /tmp/encrypted.json  | jq -r '.'
+$ cat /tmp/encrypted.json  | jq -r '.keyInfo.wrappedKey' | base64 -d - | jq -r '.'
 ```
 
 - Decrypt
@@ -526,6 +536,12 @@ For reference, the `example/util` folder contains two standalone examples of mar
 * `example/util/from_pem/main.go`
 
   Read `bare-seed` PEM formatted keys and use go to wrap/unwrap
+
+
+also see
+
+* [OpenSSL Position and Plans on Private Key Formats for the ML-KEM and ML-DSA Post-quantum (PQ) Algorithms](https://openssl-library.org/post/2025-01-21-blog-positionandplans/)
+* [Let’s All Agree to Use Seeds as ML-KEM Keys](https://words.filippo.io/ml-kem-seeds/)
 
 #### Ml-KEM x509 Certificate
 

@@ -32,7 +32,3 @@ const (
 
 	DEBUG = "debug"
 )
-
-const ()
-
-var ()

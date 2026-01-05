@@ -119,8 +119,6 @@ func main() {
 	} else {
 
 		wrapper := pqcwrap.NewWrapper()
-
-		wrapper.SetConfig(ctx, pqcwrap.WithDebug(*debug))
 		if useKMS {
 			_, err = wrapper.SetConfig(ctx, pqcwrap.WithPrivateKey(*key), pqcwrap.WithKMSKey(true), pqcwrap.WithClientData(*clientData), pqcwrap.WithDebug(*debug))
 		} else {
