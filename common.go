@@ -28,7 +28,7 @@ const (
 	PublicKey  = "public_key"
 	PrivateKey = "private_key"
 
-	KeyVersion = 2
+	KeyVersion = 3
 
 	DEBUG = "debug"
 )

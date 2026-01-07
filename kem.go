@@ -3,21 +3,26 @@ package pqcwrap
 import (
 	"bytes"
 	"crypto/mlkem"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync/atomic"
+
+	"golang.org/x/crypto/hkdf"
+
+	"context"
 
 	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	wrapaead "github.com/hashicorp/go-kms-wrapping/v2/aead"
 	"github.com/salrashid123/go-pqc-wrapping/pqcwrappb"
-	context "golang.org/x/net/context"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -150,12 +155,26 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		fmt.Printf("go-pqc-wrapping: using clientData: %s\n", cd.String())
 	}
 
+	// run a kdf on the sharedSecret
+	salt := make([]byte, sha256.New().Size())
+	_, err = rand.Read(salt)
+	if err != nil {
+		return nil, fmt.Errorf("go-pqc-wrapping: error generating salt %v", err)
+	}
+
+	kdf := hkdf.New(sha256.New, kemSharedSecret, salt, opts.WithAad)
+	derivedKey := make([]byte, 32)
+	_, err = io.ReadFull(kdf, derivedKey)
+	if err != nil {
+		return nil, fmt.Errorf("go-pqc-wrapping: error deriving key %v", err)
+	}
+
 	// now encrypt the plaintext using the aes-gcm key which we sealed earlier into the tpm object
 	// the library we're using to do that is "github.com/hashicorp/go-kms-wrapping/v2/aead"
 	//  note the ciphertext already has the iv included in it
 	//  https://github.com/hashicorp/go-kms-wrapping/blob/main/aead/aead.go#L242-L249
 	w := wrapaead.NewWrapper()
-	err = w.SetAesGcmKeyBytes(kemSharedSecret)
+	err = w.SetAesGcmKeyBytes(derivedKey)
 	if err != nil {
 		return nil, fmt.Errorf("go-pqc-wrapping: error setting AESGCM Key %v", err)
 	}
@@ -170,6 +189,7 @@ func (s *PQCWrapper) Encrypt(ctx context.Context, plaintext []byte, opt ...wrapp
 		Version:       KeyVersion,
 		Type:          keyType,
 		KemCipherText: kemCipherText,
+		KdfSalt:       salt,
 		// PublicKey:     []byte(s.publicKey),  // todo, add flag to optionally include the public key
 	}
 
@@ -328,10 +348,18 @@ func (s *PQCWrapper) Decrypt(ctx context.Context, in *wrapping.BlobInfo, opt ...
 
 	}
 
+	// run a kdf
+	kdf := hkdf.New(sha256.New, sharedKey, wrappb.KdfSalt, opts.WithAad)
+	derivedKey := make([]byte, 32)
+	_, err = io.ReadFull(kdf, derivedKey)
+	if err != nil {
+		return nil, fmt.Errorf("go-pqc-wrapping: error deriving key %v", err)
+	}
+
 	// use the sharedKey to decrypt the data
 	//   the opt... you pass in includes any  AAD you set
 	w := wrapaead.NewWrapper()
-	err = w.SetAesGcmKeyBytes(sharedKey)
+	err = w.SetAesGcmKeyBytes(derivedKey)
 	if err != nil {
 		return nil, fmt.Errorf("go-pqc-wrapping: error setting AESGCM Key %v", err)
 	}

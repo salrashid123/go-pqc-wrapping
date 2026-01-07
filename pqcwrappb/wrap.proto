@@ -15,6 +15,7 @@ message Secret {
     ml_kem_1024 = 2;    
   }
   bytes kemCipherText = 4;
-  bytes publicKey = 5;
+  bytes kdfSalt = 5;  
+  bytes publicKey = 6;
 }
 

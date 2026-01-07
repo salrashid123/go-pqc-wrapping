@@ -2,13 +2,13 @@
 
 This is a simple go library and cli using `ML-KEM` to wrap encrypt/decrypt arbitrary data.  
 
-This is basically hybrid encryption where an `ML-KEM` keypair's public key is used to generate a `sharedSecret` which is used as an `AES-GCM` encryption key ultimately used to encrypt the data.
+This is basically hybrid encryption where an `ML-KEM` keypair's public key is used to generate a `sharedSecret` which afer a key derivation (`kdf(sharedSecret)`) is used as an `AES-GCM` encryption key ultimately used to encrypt the data.
 
 It uses the standard `go1.24.0+` [crypto/mlkem](https://pkg.go.dev/crypto/mlkem@go1.24.0) library formatted for compliance with Hashicorp [go-kms-wrapping](https://github.com/hashicorp/go-kms-wrapping) library set
 
 This library also supports Google Cloud KMS's support for `ML-KEM`
 
->> NOTE: this library is note supported by Google
+>> NOTE: this library is note supported by Google and is experimental/unreviewed (caveat emptor)
 
 Also see:
 
@@ -17,6 +17,8 @@ Also see:
 * Key Encapsulation [ML-KEM](https://csrc.nist.gov/pubs/fips/203/final)
 * [Internet X.509 Public Key Infrastructure - Algorithm Identifiers for the Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM)](https://datatracker.ietf.org/doc/draft-ietf-lamps-kyber-certificates/08/)
 * [Post-Quantum Cryptography (PQC) scratchpad](https://github.com/salrashid123/pqc_scratchpad)
+
+Please note later on the keyFormat would adopt [rfc9629](https://datatracker.ietf.org/doc/rfc9629/) if/when officially approved.  Inother words, instead of the proto, 
 
 ---
 
@@ -42,29 +44,34 @@ If you want to encrypt data intended for a remote system, the remote system must
 
 If Bob wants to encrypt data for Alice
 
-Alice generates `MK-KEM` keypair (`pub.pem`, `priv.pem`)
+1. Alice generates `MK-KEM` keypair (`pub.pem`, `priv.pem`)
 
-Alice shares `pub.pem` with Bob
+2. Alice shares public key `pub.pem` with Bob
 
 Encrypt (Bob):
 
-1. generate encapsulation data 
+3. generate encapsulation data using `pub.pem`
    
    `kemSharedSecret, kemCipherText = ML_KEM_Encapsulate( pub.pem )` 
 
-2. Use `kemSharedSecret` as the AEAD key to encrypt `plainText`
+4. Derive a new key using `kemSharedSecret` as a basis and then use that new key as the AEAD key to encrypt `plainText`
 
-   `cipherText = AEAD_Encrypt( kemSharedSecret, plainText )`
+   `derivedKey = HKDF( kemSharedSecret )`
+   `cipherText = AEAD_Encrypt( derivedKey, plainText )`
 
-3.  Bob sends `[ kemCipherText, cipherText ]` to Alice
+5.  Bob sends `[ kemCipherText, cipherText ]` to Alice
 
 Decrypt (Alice):
 
-4. `kemSharedSecret = ML_KEM_Decapsulate( priv.pem, kemCipherText )`
+6. derive same shared secret using private key `priv.pem`
 
-5. `plaintext = AEAD_Decrypt( kemSharedSecret, cipherText )`
+   `kemSharedSecret = ML_KEM_Decapsulate( priv.pem, kemCipherText )`
 
-This ofcourse extends how ml-kem is used by employing the `kemSharedSecret` as a wrapping AES256-GCM encryptionKey.  For reference the basic flow is described here in [FIPS 203 (page 12)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
+7. `derivedKey = HKDF( kemSharedSecret )`
+
+8. `plaintext = AEAD_Decrypt( derivedKey, cipherText )`
+
+This extends how ml-kem is used by employing the `kemSharedSecret` as a wrapping AES256-GCM encryptionKey.  For reference, the basic flow is described here in [FIPS 203 (page 12)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
 
 ![images/key_exchange.png](images/key_exchange.png)
 
@@ -289,6 +296,7 @@ The extract the public key into PEM format:
 $ openssl --version
   OpenSSL 3.5.0-dev  (Library: OpenSSL 3.5.0-dev )
 
+### for ML-KEM-768
 $ { echo -n "MIIEsjALBglghkgBZQMEBAIDggShAA==" | base64 -d ; cat /tmp/kem_pub.nist; } | openssl asn1parse -inform DER -in -
     0:d=0  hl=4 l=1202 cons: SEQUENCE          
     4:d=1  hl=2 l=  11 cons: SEQUENCE          
@@ -331,6 +339,8 @@ go run decrypt_kms/main.go \
 
 There are two levels of encryption involved with this library and is best described in this flow:
 
+TODO: Reformat proto to use `KEMRecipientInfo`:  [Using Key Encapsulation Mechanism (KEM) Algorithms in the Cryptographic Message Syntax (CMS)](https://datatracker.ietf.org/doc/rfc9629/), [A PQC Almanac](https://downloads.bouncycastle.org/csharp/docs/PQC-Almanac.pdf)
+
 -  Encrypt
 
 1. Read the `ML-KEM` Public key and generate `sharedCiphertext` and `sharedSecret`
@@ -354,26 +364,28 @@ There are two levels of encryption involved with this library and is best descri
 
 ```json
 {
-	"ciphertext": "bQAifHrc2qo1WRpGW6vyWlKHd2QeTSt1WZZOxlHj7g==",
+	"ciphertext": "yYIjqdGdiw7Be/EAbhh4eju91fWbMSGv/cD1MLEhZw==",
 	"keyInfo": {
+		"mechanism": "1",
 		"keyId": "myname",
-		"wrappedKey": "eyJuYW1lIjoibXluYW1lIiwidmVyc2lvbiI6MSwidHlwZSI6Im1sX2tlbV83NjgiLCJrZW1DaXBoZXJUZXh0IjoiMk4yRldVeGtWdUtDY21RU1o3VDQ0amlrZkIrb2ZnTmZvVE0vMERudUJoREhvNG1ORnJYb2xMUndraGNqRG12Nk00WWt5b2JncElLTWRuOTVHUmk2WG0vRE15ZTBDNEdyRFEweCtRcU9vRndLYU9kK05wT2ZQNG1ERWRWK2EzdHlMREk2djVxSGRhMFZkSWNaMk5oMDZDOGkxQjlFNGNXcU1MRlh4VW5QTkUzY1EwS2RSZVA2RVZyQm0rNjRQRzdNSGZLVjEzdkQ3UUZIWGtMR2pUR0Jodk9IMWxPWWp2YStLZGdCSWlkMFV3MllDVjZuWFVQMHUyZC9xcHZqVURUMG1wN3FwVndlRExFWUxOWjNxbElFQTVPWXgydnMrYmpwa2NLYjR6WGN4dVhEcWhmZzZvRVEyMUtFa0dhOEtIWUdDVFB5cG5PUzZtclBHdGZOelJFTDllaG04cjVJNHE5U2xQUWUyM2MwZmp3d1BNSzVUOGJ2ZUFVT1RjZENmZ0RWcXptaU8zSWZTVzI5NmpPeXVMUzFOWitGVk9OYzZpeHhwUDNLT3hKUzVrTWF5d09BYndDSHh4YzZ0eTdjYVNScGlpY05Jak8rS3g4Mm91L0dJSE9aSE1qZ2dpbjQvMnRxTkNKVTMwakp2MDZXMnhFUE5rRkZWVjVESkpydDJEVnE4SW1TQ2ppd0NHYkxiQ1c4Q3lMRTY3T01LZTVuZ0FNbTdaTCtoYXdDYUcwWjRGYklhSWZXR3J0WVAwdFYrcW9tbTNDS09icVBIOUZ3bHg2YXRncy83SEsvNUNCN1lZeHN5ZjBnaUg0eExCRE1xMTBqdTVkMWxSbFBHNEhPanNDK0VSR1ljS2lxNnhFZkhucDJGdTI2ejhJdHN6QkxDV21YM2d2V2Z2T052ZTYvVkVNS2d0azBiaEtyTG5tdC9OQjNRTGpxbGZHUXZIRGtoRFNtNldPbmxpVGpvUzZLWVpYSGRPdmtZOTk0b2xXV2JobDBpU01mbUtvdW1JNUJNamFjMnN5bzJlZEs4dGtKZWx5YVEybStBM01IV2p5YkY0NVFMblB3NkxKMjJuUEVzanJRZ3RxR0c3NS92K0lITzBTSHUwSENpaHFNNmJ2U0VQN0VrV3FZSWx4RmVVeFB3TGMyNDMwWURHSG5kejgvWnIxcWdjY1Rycm9oTEI3dkRiOGlvNXI5bkNQMDZXaElnZ0c4SnJFaGhLa01ML3ZZblY0bmt0a0diLysvZjFZTjRiRklPMEVrOU1IeFpmYnJYZXl0U2VkQnZoWERMRUxhczN4NGw1VXYyMVZyNDh6aXAwRm9YV2RBSVVYL2RXOW11V0hhTWhndkd4b2pCS2ZVN0h2b3FZNUNCZUZ4cFhidWxtYi9sQlAwTllCSkQ5UVdjdU5MVEdBWjh5eXFjMzJFWG1qOCt6M2lnQjFWNTVBNWFmU0FESW9vTW9qd05nUmMyQStsT2Frcm5rMGZ6NERSaXpLU2xhUklyVVVFR2xQVlBtNFVya1pGTEZQZzlZY3B1WllpTEFjMkRIdklDMGhic2lRYUNQV051cm1XMzdmOHBDM1o3OS9ORVNHUkp5WUd3MmIwaVNzSDdFTStXMWtqaVUvZHA5UWRadkxHVjhYaEhMaHZSbXkwaDdnUmZJbnpjRVpxZnlKNklvc2NRY2U4b2RrbmIyMWlzcy9TZ3lKeUdCdVJ0bGV5cEt1UVRLeFVJVWVmVVkrUVZ6MENwZzVCOVl3bjNhK3VBYStrNjlQVldQZjFISW1ydVV0VTBtMUtiTitvQ1dRMHIwdy9LemUyVURERGJac0huOGlKS0FWV2J3b1BHRXlxUFNBM0xpaGVrNnJGektxODd5N2pWaU9YU0hiOTU4WGtSLzZxalFhVG5ZUWZVc3JzN1RPNDd3Y2pUMDB4cTluNGNUWTJmWUE9In0="
+		"wrappedKey": "eyJuYW1lIjoibXluYW1lIiwgInZlcnNpb24iOjIsICJ0eXBlIjoibWxfa2VtXzc2OCIsICJrZW1DaXBoZXJUZXh0IjoiYVExYnQyZlhCSGNmMVNESFVXVElXNWxlb1RXblpJakZnNGYzWXR2Z3FlM2p2YWtpU0dJRmEzWGh6UkVxMVNHUmpjaFFYalpyREdiRHd1ZWtpaGVDZm9rZTc4bGtkWTgydWxrNkxKbVNDUEdlOVZJcUNIMVNUc3JWdXFOajQ2ZGpERWx3RXlDWkxNN0Z0WnN6Vi9XRDdzQWJKNTl4TWk1WXVoQmZHdEdoZnlRZWJaRys4bm9rSVNzWWJxU1VmcHBuNEEwcHh4Um1FcmZpRTlINEVVY2JUV09DU0Q4ZDY1bEhXSW1LV1FFYm96NTVBamNWMnBGVU5LSWk5dURmdmxSOVVEOUdrQTFGQUZ3Sm11MW0rRUc1by9oSUtKTUQrUzJIQ0s2amlwcmkvNWI1ZlNQNjBsclFDc216K0FSNGdmTy9JQnUxYXhEbEtnWDRuZlZZazdiQVBaTURHRkROODVXT2pMTHN0L2QvdVpEbWtsM2tWY3JCdjRWQnAxR1hTaTRnZWtsdGtsV1V1S1FOR2d4VCszb0FFSzVNeHc2TElPYllkU1JTMFJyaUladnZuZEVra2FBaUNtTjM0dnNmQkhSM0FQdm5JMTJUVUNGYS9xTENjWmxrdG1PbkF1b1RWcDMrcFFlUERsL3MzZG5YMmdkSmZLYjlSNUFSZXFGcVVQNWVhWlN0eTExQ1JOYklia2owbjdSQmFZWEFac3dERUFPZ0NBejVxNjBROFJSZ01uckM5djhZeS9WOTJvWlN2RFc4ZWlqZFE4NHFBc3lQZHBYSU1ZZ1VNK2VjQno4cFJ4RkZQVnpmZGUwTVNkZlhxeWlPWlJxNFlRYzYyVjNYbUdmRnRpc3pOSWV2Szk0cU12TktiTkczQ1lZbFhxd0hZbGtCQmF4Mkd2aSthR0JLUzFVdnVFeTBRUDZvYTVzVFVoS3FGY0t4Unh6TGVHd2RSQjF2M3VaZjNpaW1aeVNZaGJNNklNUHYzNXdyK1lWVWlWSjNicXBSNXAyWGdudEU4Z0JFdG14bEU4QTZxQnB4ZnRTaWNQSTNJbklBVmsvV2xDOXMrTE5XQ2MyZmVwRXpCcmFXTTBaVHQ0WEVReW9jcjN0eXFLOG0wcGE4dS9Hcy9admlGNy9lWGczZWpxMGRNSGd1MlZ5SlhSVVpISXpvSURJRExjVTJpYUZuZ3B5U09VczJxMC9yaG5yNVZVbmQwRHVPYnA3U2p0WExUOHBlVnM0SkVTcE8yWXcrakovdkF1L3NBaHBaVXlDUWh5Nno2TEkxaGhXeDFORmRvVEhja0gzdjdneER5MFAzQXNqbSt1NHlVaGNDVkVzK1MzNEw0T2xqRDhNSGhkKzVPcnYrOVVSMTNMWGFobGYrWi9tQkFhanpTK2ZVTmJGcjdBTisraE0rKzhEQm8zcjVpY1V1QlNub29GZndCT1NvTHVuWWhMK040VytVOXRodFJHa1ZCR0R4c3hVRTRMUGx2RFQxL2NSNHltbzhnRWxUYWdiLzA4SkxabWNKRnZRT2VPS0FSZkhFeDF4NktoYS9KQkdaTUhMaUxacHF3VUc4SGRMcDVNblVUTnM0VHFrNTRTMjQvajlJUlpiTC9KMWc0MFFRdnlTeFlGcHZFaHMvb2gzc2dXdHdWdGNzamVHTDY3WG51enVVblUxb2o3SmtoRmlrdHRKWlVhV1FQSmdvUExmYURQV3dweDV0S3U5SERZUjhJOWR4bmNsZjNEdmE3ZlpnUHRkZU9Yd2JSSjVKNGFVZzBUbnl3cWszY2Z4YTByMDdHWXowN1ZNbitpWUZDTXBQOXJkMk0wOHE0VFlleHhMdE1tUXdKNENiUzhWY3EzdVp0ejZDcmtrWjVOakRQY0V0WjFYUmtLaUFrWEJCd0NoczMwS0pqK3pZWDhpWGVHY0xITjNqOHoxa2pQbkpCUVU9IiwgImtkZlNhbHQiOiJQVmkvNEhOUExUVGJIMWVJZmxzV2xqTCsvSnhIR2FuT0lScTU5TGhKU2dvPSJ9"
 	}
 }
 ```
 
 If you base64decode the `wrappedKey`
 
-* `kemCipherText` the `ML-KEM` ciphertext (eg `sharedCiphertext`). Once this is decapsulated, this becomes an AES GCM
+* `kemCipherText` the `ML-KEM` ciphertext (eg `sharedCiphertext`). Once this is decapsulated, this becomes an AES GCM after KDF
 
 The decoded keyfile is:
 
 ```json
 {
   "name": "myname",
-  "version": 1,
+  "version": 2,
   "type": "ml_kem_768",
-  "kemCipherText": "2N2FWUxkVuKCcmQSZ7T44jikfB+ofgNfoTM/0DnuBhDHo4mNFrXolLRwkhcjDmv6M4YkyobgpIKMdn95GRi6Xm/DMye0C4GrDQ0x+QqOoFwKaOd+NpOfP4mDEdV+a3tyLDI6v5qHda0VdIcZ2Nh06C8i1B9E4cWqMLFXxUnPNE3cQ0KdReP6EVrBm+64PG7MHfKV13vD7QFHXkLGjTGBhvOH1lOYjva+KdgBIid0Uw2YCV6nXUP0u2d/qpvjUDT0mp7qpVweDLEYLNZ3qlIEA5OYx2vs+bjpkcKb4zXcxuXDqhfg6oEQ21KEkGa8KHYGCTPypnOS6mrPGtfNzREL9ehm8r5I4q9SlPQe23c0fjwwPMK5T8bveAUOTcdCfgDVqzmiO3IfSW296jOyuLS1NZ+FVONc6ixxpP3KOxJS5kMaywOAbwCHxxc6ty7caSRpiicNIjO+Kx82ou/GIHOZHMjggin4/2tqNCJU30jJv06W2xEPNkFFVV5DJJrt2DVq8ImSCjiwCGbLbCW8CyLE67OMKe5ngAMm7ZL+hawCaG0Z4FbIaIfWGrtYP0tV+qomm3CKObqPH9Fwlx6atgs/7HK/5CB7YYxsyf0giH4xLBDMq10ju5d1lRlPG4HOjsC+ERGYcKiq6xEfHnp2Fu26z8ItszBLCWmX3gvWfvONve6/VEMKgtk0bhKrLnmt/NB3QLjqlfGQvHDkhDSm6WOnliTjoS6KYZXHdOvkY994olWWbhl0iSMfmKoumI5BMjac2syo2edK8tkJelyaQ2m+A3MHWjybF45QLnPw6LJ22nPEsjrQgtqGG75/v+IHO0SHu0HCihqM6bvSEP7EkWqYIlxFeUxPwLc2430YDGHndz8/Zr1qgccTrrohLB7vDb8io5r9nCP06WhIggG8JrEhhKkML/vYnV4nktkGb/+/f1YN4bFIO0Ek9MHxZfbrXeytSedBvhXDLELas3x4l5Uv21Vr48zip0FoXWdAIUX/dW9muWHaMhgvGxojBKfU7HvoqY5CBeFxpXbulmb/lBP0NYBJD9QWcuNLTGAZ8yyqc32EXmj8+z3igB1V55A5afSADIooMojwNgRc2A+lOakrnk0fz4DRizKSlaRIrUUEGlPVPm4UrkZFLFPg9YcpuZYiLAc2DHvIC0hbsiQaCPWNurmW37f8pC3Z79/NESGRJyYGw2b0iSsH7EM+W1kjiU/dp9QdZvLGV8XhHLhvRmy0h7gRfInzcEZqfyJ6IoscQce8odknb21iss/SgyJyGBuRtleypKuQTKxUIUefUY+QVz0Cpg5B9Ywn3a+uAa+k69PVWPf1HImruUtU0m1KbN+oCWQ0r0w/Kze2UDDDbZsHn8iJKAVWbwoPGEyqPSA3Lihek6rFzKq87y7jViOXSHb958XkR/6qjQaTnYQfUsrs7TO47wcjT00xq9n4cTY2fYA="
+  "kemCipherText": "aQ1bt2fXBHcf1SDHUWTIW5leoTWnZIjFg4f3Ytvgqe3jvakiSGIFa3XhzREq1SGRjchQXjZrDGbDwuekiheCfoke78lkdY82ulk6LJmSCPGe9VIqCH1STsrVuqNj46djDElwEyCZLM7FtZszV/WD7sAbJ59xMi5YuhBfGtGhfyQebZG+8nokISsYbqSUfppn4A0pxxRmErfiE9H4EUcbTWOCSD8d65lHWImKWQEboz55AjcV2pFUNKIi9uDfvlR9UD9GkA1FAFwJmu1m+EG5o/hIKJMD+S2HCK6jipri/5b5fSP60lrQCsmz+AR4gfO/IBu1axDlKgX4nfVYk7bAPZMDGFDN85WOjLLst/d/uZDmkl3kVcrBv4VBp1GXSi4gekltklWUuKQNGgxT+3oAEK5Mxw6LIObYdSRS0RriIZvvndEkkaAiCmN34vsfBHR3APvnI12TUCFa/qLCcZlktmOnAuoTVp3+pQePDl/s3dnX2gdJfKb9R5AReqFqUP5eaZSty11CRNbIbkj0n7RBaYXAZswDEAOgCAz5q60Q8RRgMnrC9v8Yy/V92oZSvDW8eijdQ84qAsyPdpXIMYgUM+ecBz8pRxFFPVzfde0MSdfXqyiOZRq4YQc62V3XmGfFtiszNIevK94qMvNKbNG3CYYlXqwHYlkBBax2Gvi+aGBKS1UvuEy0QP6oa5sTUhKqFcKxRxzLeGwdRB1v3uZf3iimZySYhbM6IMPv35wr+YVUiVJ3bqpR5p2XgntE8gBEtmxlE8A6qBpxftSicPI3InIAVk/WlC9s+LNWCc2fepEzBraWM0ZTt4XEQyocr3tyqK8m0pa8u/Gs/ZviF7/eXg3ejq0dMHgu2VyJXRUZHIzoIDIDLcU2iaFngpySOUs2q0/rhnr5VUnd0DuObp7SjtXLT8peVs4JESpO2Yw+jJ/vAu/sAhpZUyCQhy6z6LI1hhWx1NFdoTHckH3v7gxDy0P3Asjm+u4yUhcCVEs+S34L4OljD8MHhd+5Orv+9UR13LXahlf+Z/mBAajzS+fUNbFr7AN++hM++8DBo3r5icUuBSnooFfwBOSoLunYhL+N4W+U9thtRGkVBGDxsxUE4LPlvDT1/cR4ymo8gElTagb/08JLZmcJFvQOeOKARfHEx1x6Kha/JBGZMHLiLZpqwUG8HdLp5MnUTNs4Tqk54S24/j9IRZbL/J1g40QQvySxYFpvEhs/oh3sgWtwVtcsjeGL67XnuzuUnU1oj7JkhFikttJZUaWQPJgoPLfaDPWwpx5tKu9HDYR8I9dxnclf3Dva7fZgPtdeOXwbRJ5J4aUg0Tnywqk3cfxa0r07GYz07VMn+iYFCMpP9rd2M08q4TYexxLtMmQwJ4CbS8Vcq3uZtz6CrkkZ5NjDPcEtZ1XRkKiAkXBBwChs30KJj+zYX8iXeGcLHN3j8z1kjPnJBQU=",
+  "kdfSalt": "PVi/4HNPLTTbH1eIflsWljL+/JxHGanOIRq59LhJSgo="
 }
 ```
 
@@ -411,6 +423,7 @@ Its important to decrypt using a cli or library version which is consistent with
 |------------|-------------|
 | 1 | `2/25/25` |
 | 2 | `1/2/26` |
+| 3 | `1/7/26` |
 
 ### Build
 
