@@ -57,6 +57,7 @@ Encrypt (Bob):
 4. Derive a new key using `kemSharedSecret` to AEAD key to encrypt `plainText`
 
    `derivedKey = HKDF( kemSharedSecret )`
+   
    `cipherText = AEAD_Encrypt( derivedKey, plainText )`
 
 5.  Bob sends `[ kemCipherText, cipherText ]` to Alice
