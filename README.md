@@ -54,7 +54,7 @@ Encrypt (Bob):
    
    `kemSharedSecret, kemCipherText = ML_KEM_Encapsulate( pub.pem )` 
 
-4. Derive a new key using `kemSharedSecret` as a basis and then use that new key as the AEAD key to encrypt `plainText`
+4. Derive a new key using `kemSharedSecret` to AEAD key to encrypt `plainText`
 
    `derivedKey = HKDF( kemSharedSecret )`
    `cipherText = AEAD_Encrypt( derivedKey, plainText )`
